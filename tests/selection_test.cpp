@@ -189,7 +189,7 @@ int main() {
 
     g_lastCommand = 0;
     DoubleClick(view.Handle(), 400, kPastEndY);
-    Check(g_lastCommand == IDC_BTN_SEND, "double-click below the text still sends");
+    Check(g_lastCommand != IDC_BTN_SEND, "double-click below the text does not send");
 
     // --- Shift-click -------------------------------------------------------
     view.ClearSelection();

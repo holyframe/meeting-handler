@@ -5,31 +5,28 @@
 #include <QApplication>
 #include <QScreen>
 #include <QSettings>
-#include <QSplitter>
-#include <QStatusBar>
+#include <QVBoxLayout>
 
 MeetingHandlerWindow::MeetingHandlerWindow(const Settings& captionSettings, QSettings& layout) {
     setWindowFlag(Qt::FramelessWindowHint, captionSettings.compactView);
     setWindowFlag(Qt::WindowStaysOnTopHint, captionSettings.compactView || captionSettings.alwaysOnTop);
 
     setMinimumWidth(1120);
-    auto* splitter = new QSplitter(Qt::Vertical, this);
-    splitter->setObjectName("workspaceSplitter");
-    splitter->setChildrenCollapsible(false);
-    splitter->setHandleWidth(6);
-    splitter->setStyleSheet("QSplitter#workspaceSplitter::handle { background: #344459; }"
-                            "QSplitter#workspaceSplitter::handle:hover { background: #5A7899; }");
-    auto* captions = new CaptionPane(splitter);
-    splitter->addWidget(captions);
-    auto* controller = new MeetingControllerPane(splitter);
-    splitter->addWidget(controller);
-    setCentralWidget(splitter);
+    auto* workspace = new QWidget(this);
+    workspace->setObjectName("workspace");
+    auto* column = new QVBoxLayout(workspace);
+    column->setContentsMargins(0, 0, 0, 0);
+    column->setSpacing(0);
+    auto* captions = new CaptionPane(workspace);
+    auto* controller = new MeetingControllerPane(workspace);
+    column->addWidget(captions, 1);
+    column->addWidget(controller, 1);
+    setCentralWidget(workspace);
 
-    auto* status = statusBar();
-    status->setStyleSheet("QStatusBar { color: #91A5BC; background: #0A1320; border-top: 1px solid #26364A; }");
-    status->showMessage(controller->statusMessage());
-    connect(controller, &MeetingControllerPane::statusMessageChanged, status,
-            [status](const QString& message) { status->showMessage(message); });
+    connect(captions, &CaptionPane::logLine, controller, &MeetingControllerPane::appendLog);
+    connect(captions, &CaptionPane::logToggled, controller, &MeetingControllerPane::setLogVisible);
+    connect(controller, &MeetingControllerPane::logVisibilityChanged, captions,
+            &CaptionPane::setLogVisible);
     connect(captions, &QWidget::windowTitleChanged, this, [this](const QString& title) {
         setWindowTitle(QStringLiteral("Meeting Handler — ") + title);
     });
@@ -37,8 +34,6 @@ MeetingHandlerWindow::MeetingHandlerWindow(const Settings& captionSettings, QSet
     const QSize available = screen()->availableGeometry().size() - QSize(16, 48);
     resize(QSize(1200, 900).boundedTo(available));
     const bool restored = restoreGeometry(layout.value("geometry").toByteArray());
-    if (!splitter->restoreState(layout.value("splitter").toByteArray()))
-        splitter->setSizes({450, 450});
     captionsReady_ = captions->initialize(captionSettings);
     if (!captionsReady_) return;
 
@@ -50,9 +45,9 @@ MeetingHandlerWindow::MeetingHandlerWindow(const Settings& captionSettings, QSet
             ::SetWindowPos(reinterpret_cast<HWND>(winId()), nullptr, position.x, position.y,
                            0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
-    connect(qApp, &QCoreApplication::aboutToQuit, this, [this, splitter, &layout] {
+    connect(qApp, &QCoreApplication::aboutToQuit, this, [this, &layout] {
         layout.setValue("geometry", saveGeometry());
-        layout.setValue("splitter", splitter->saveState());
+        layout.remove("splitter");
         layout.sync();
     });
 }

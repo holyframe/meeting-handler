@@ -22,6 +22,7 @@
 #define IDC_BTN_SAVE          1019
 #define IDC_BTN_CLEAR         1020
 #define IDC_BTN_LISTEN        1021
+#define IDC_BTN_LOG           1022
 
 // ---- Global hotkey --------------------------------------------------------
 #define HOTKEY_SEND           0xB001

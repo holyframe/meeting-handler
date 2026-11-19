@@ -286,12 +286,7 @@ LRESULT CaptionView::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
                 // back to a caret.
                 EndDrag();
                 SelectWordAt(position);
-                return 0;
             }
-            // "Double-click empty area to send" from the reference design; on a
-            // word the gesture selects instead, as it does everywhere else.
-            ::SendMessageW(::GetParent(m_hwnd), WM_COMMAND,
-                           MAKEWPARAM(IDC_BTN_SEND, BN_CLICKED), 0);
             return 0;
         }
 

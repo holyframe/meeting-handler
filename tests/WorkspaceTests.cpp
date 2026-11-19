@@ -7,12 +7,11 @@
 
 #include <QApplication>
 #include <QIcon>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
-#include <QSplitter>
-#include <QStackedWidget>
-#include <QStatusBar>
 #include <QTemporaryDir>
+#include <QWidget>
 #include <QTest>
 #include <QTimer>
 
@@ -31,22 +30,28 @@ QRect windowBounds(HWND window) {
     return QRect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
 }
 
-void verifyCaptionFits(QSplitter* split) {
-    auto* captions = qobject_cast<CaptionPane*>(split->widget(0));
-    QVERIFY(captions && !captions->isWindow() && captions->parentWidget() == split);
+void verifyCaptionFits(QWidget* workspace) {
+    auto* captions = workspace->findChild<CaptionPane*>();
+    auto* controller = workspace->findChild<MeetingControllerPane*>();
+    QVERIFY(captions && controller);
+    QVERIFY(!captions->isWindow() && captions->parentWidget() == workspace);
+    QVERIFY(controller->parentWidget() == workspace);
     const HWND pane = reinterpret_cast<HWND>(captions->winId());
     const QRect slot = windowBounds(pane);
     QVERIFY(!slot.isEmpty());
-    QCOMPARE(captions->width(), split->contentsRect().width());
-    QCOMPARE(captions->geometry().bottom() + 1, split->handle(1)->geometry().top());
+    QCOMPARE(captions->width(), workspace->contentsRect().width());
+    QCOMPARE(captions->geometry().bottom() + 1, controller->geometry().top());
     QVERIFY(qAbs(slot.width() - captions->width() * captions->devicePixelRatioF()) <= 1);
     QVERIFY(qAbs(slot.height() - captions->height() * captions->devicePixelRatioF()) <= 1);
     const HWND view = ::GetDlgItem(pane, IDC_CAPTION_VIEW);
     QVERIFY(view && ::GetParent(view) == pane);
     QCOMPARE(windowBounds(view).right(), slot.right());
-    QCOMPARE(windowBounds(::GetDlgItem(pane, IDC_STATUSBAR)).bottomRight(), slot.bottomRight());
-    QVERIFY(windowBounds(::GetDlgItem(pane, IDC_BTN_SETTINGS)).right() <
-            windowBounds(::GetDlgItem(pane, IDC_CBO_FONT)).left());
+    QCOMPARE(windowBounds(::GetDlgItem(pane, IDC_BOTTOM_PANEL)).bottom(), slot.bottom());
+    const HWND settingsButton = ::GetDlgItem(pane, IDC_BTN_SETTINGS);
+    const HWND logButton = ::GetDlgItem(pane, IDC_BTN_LOG);
+    QVERIFY(settingsButton && logButton);
+    QVERIFY(windowBounds(settingsButton).right() <= windowBounds(logButton).left());
+    QVERIFY(windowBounds(logButton).right() < windowBounds(::GetDlgItem(pane, IDC_CBO_FONT)).left());
 }
 
 HWND dialogOwner = nullptr;
@@ -72,48 +77,44 @@ private slots:
         settings.hotkeyVirtualKey = 0;
         settings.sidePanelWidth = 273;
         HWND native = nullptr;
-        QByteArray savedSplit;
         {
             MeetingHandlerWindow window(settings, layout);
             QVERIFY(window.captionsReady());
             window.show();
             QVERIFY(QTest::qWaitForWindowExposed(&window));
-            auto* split = window.findChild<QSplitter*>("workspaceSplitter");
-            QVERIFY(split && split->count() == 2 && split->orientation() == Qt::Vertical);
-            verifyCaptionFits(split);
+            auto* workspace = window.findChild<QWidget*>("workspace");
+            QVERIFY(workspace && window.findChild<QWidget*>("workspaceSplitter") == nullptr);
+            verifyCaptionFits(workspace);
             QVERIFY(!QIcon(":/icons/meeting-handler.ico").pixmap(16, 16).isNull());
-            QCOMPARE(split->widget(0)->grab(QRect(0, 0, 8, 8)).toImage().pixelColor(1, 1),
+            auto* captions = workspace->findChild<CaptionPane*>();
+            QCOMPARE(captions->grab(QRect(0, 0, 8, 8)).toImage().pixelColor(1, 1),
                      QColor(32, 32, 32));
-            auto* controller = qobject_cast<MeetingControllerPane*>(split->widget(1));
+            auto* controller = workspace->findChild<MeetingControllerPane*>();
             QVERIFY(controller && !controller->isWindow() && !controller->styleSheet().isEmpty());
-            QVERIFY(window.statusBar()->currentMessage().startsWith("Ready"));
+            auto* log = window.findChild<QPlainTextEdit*>("appLog");
+            auto* logPanel = window.findChild<QWidget*>("appLogPanel");
+            QVERIFY(log && logPanel && !logPanel->isVisible());
+            QVERIFY(log->toPlainText().contains("Ready"));
             const HWND frame = reinterpret_cast<HWND>(window.winId());
-            native = reinterpret_cast<HWND>(split->widget(0)->winId());
+            native = reinterpret_cast<HWND>(captions->winId());
             QVERIFY(native && ::GetAncestor(native, GA_ROOT) == frame);
             QVERIFY((::GetWindowLongPtrW(native, GWL_STYLE) & WS_CHILD) != 0);
             QVERIFY(window.windowTitle().contains("No target selected"));
             const HWND view = ::GetDlgItem(native, IDC_CAPTION_VIEW);
             const HWND listen = ::GetDlgItem(native, IDC_BTN_LISTEN);
-            const HWND status = ::GetDlgItem(native, IDC_STATUSBAR);
-            QVERIFY(view && listen && status);
+            QVERIFY(view && listen);
             ::SendMessageW(listen, BM_CLICK, 0, 0);
             QCOMPARE(windowText(listen), "Resume caption listening");
 
-            split->setSizes({220, 600});
-            QCoreApplication::processEvents();
-            verifyCaptionFits(split);
-            QVERIFY(split->widget(0)->geometry().bottom() < split->widget(1)->geometry().top());
+            verifyCaptionFits(workspace);
 
-            const auto navigation = window.findChildren<QPushButton*>("pageNavButton");
-            auto* pages = window.findChild<QStackedWidget*>("pageStack");
-            QVERIFY(pages && navigation.size() == 4);
-            for (qsizetype i = 0; i < navigation.size(); ++i) {
-                navigation[i]->click();
-                QCOMPARE(pages->currentIndex(), static_cast<int>(i));
-                QCOMPARE(window.statusBar()->currentMessage(), controller->statusMessage());
-                QVERIFY(::IsWindowVisible(view));
-            }
-            navigation.front()->click();
+            QCOMPARE(window.findChildren<QPushButton*>("pageNavButton").size(), 0);
+            QVERIFY(window.findChild<QWidget*>("pageStack") == nullptr);
+            ::SendMessageW(::GetDlgItem(native, IDC_BTN_LOG), BM_CLICK, 0, 0);
+            QTRY_VERIFY(logPanel->isVisible());
+            QVERIFY(::IsWindowVisible(view));
+            ::SendMessageW(::GetDlgItem(native, IDC_BTN_LOG), BM_CLICK, 0, 0);
+            QTRY_VERIFY(!logPanel->isVisible());
 
             // Exercise the production dispatcher with queued Windows keyboard
             // messages, without sending global input or contacting a browser.
@@ -128,17 +129,17 @@ private slots:
             QVERIFY(first && last && first != last);
             ::SetFocus(last);
             ::PostMessageW(last, WM_KEYDOWN, VK_TAB, 0);
-            QTRY_VERIFY(split->widget(1)->isAncestorOf(QApplication::focusWidget()));
+            QTRY_VERIFY(controller->isAncestorOf(QApplication::focusWidget()));
             QVERIFY(!::IsChild(native, ::GetFocus()));
             auto* update = new CaptionUpdate{0, {L"Combined caption test"}};
             ::SendMessageW(native, WM_APP_CAPTION_UPDATE, 0, reinterpret_cast<LPARAM>(update));
             ::SendMessageW(view, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(5, 15));
             ::SendMessageW(view, WM_LBUTTONUP, 0, MAKELPARAM(5, 15));
             ::SendMessageW(::GetDlgItem(native, IDC_BTN_SEND), BM_CLICK, 0, 0);
-            QCOMPARE(windowText(status), "Pick a web tab before sending.");
+            QVERIFY(log->toPlainText().contains("Pick a web tab before sending."));
             ::PostMessageW(view, WM_KEYDOWN, VK_ESCAPE, 0);
             ::PostMessageW(native, WM_HOTKEY, HOTKEY_SEND, 0);
-            QTRY_COMPARE(windowText(status), "Select caption text before sending.");
+            QTRY_VERIFY(log->toPlainText().contains("Select caption text before sending."));
 
             dialogOwner = frame;
             QVERIFY(::SetTimer(nullptr, 0, 25, dismissCaptionSettings) != 0);
@@ -146,28 +147,26 @@ private slots:
             QVERIFY(foundSettings);
             QVERIFY(::IsWindowEnabled(frame));
 
-            savedSplit = split->saveState();
             QTimer::singleShot(0, &window, &QWidget::close);
             QCOMPARE(QApplication::exec(), 0);
-            QCOMPARE(layout.value("splitter").toByteArray(), savedSplit);
+            QVERIFY(layout.value("splitter").toByteArray().isEmpty());
             QVERIFY(!layout.value("geometry").toByteArray().isEmpty());
         }
         QVERIFY(!::IsWindow(native));
         settings.theme = UiTheme::Light;
         MeetingHandlerWindow reopened(settings, layout);
         QVERIFY(reopened.captionsReady());
-        auto* split = reopened.findChild<QSplitter*>("workspaceSplitter");
-        QVERIFY(split);
-        QCOMPARE(split->saveState(), savedSplit);
+        auto* workspace = reopened.findChild<QWidget*>("workspace");
+        QVERIFY(workspace && reopened.findChild<QWidget*>("workspaceSplitter") == nullptr);
         reopened.show();
         QVERIFY(QTest::qWaitForWindowExposed(&reopened));
-        verifyCaptionFits(split);
-        QCOMPARE(split->widget(0)->grab(QRect(0, 0, 8, 8)).toImage().pixelColor(1, 1),
+        verifyCaptionFits(workspace);
+        QCOMPARE(workspace->findChild<CaptionPane*>()->grab(QRect(0, 0, 8, 8)).toImage().pixelColor(1, 1),
                  QColor(Qt::white));
         reopened.showMaximized();
         QTRY_VERIFY(reopened.isMaximized());
         QCoreApplication::processEvents();
-        verifyCaptionFits(split);
+        verifyCaptionFits(workspace);
     }
 };
 

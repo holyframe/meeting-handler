@@ -45,8 +45,6 @@ constexpr int kMinColumnWidth = 320;
 // breathing room above the captions, this strip behaves like draggable title
 // bar space in normal view. Compact view intentionally omits it.
 constexpr int kTitleBarExtension = 28;
-// Fallback height for the log view when the font metrics are unavailable.
-constexpr int kLogHeight    = 22;
 // Draggable strip between the caption pane and the bottom panel, and the
 // smallest caption pane a drag may leave behind.
 constexpr int kSplitterHeight  = 6;
@@ -449,10 +447,6 @@ LRESULT CaptionPane::HandleControlMessage(UINT message, WPARAM wParam, LPARAM lP
 
         case WM_DRAWITEM: {
             const auto* item = reinterpret_cast<const DRAWITEMSTRUCT*>(lParam);
-            if (item && item->hwndItem == m_statusBar) {
-                DrawStatusPanel(*item);
-                return TRUE;
-            }
             if (item && item->CtlType == ODT_BUTTON) {
                 DrawDarkButton(*item);
                 return TRUE;
@@ -628,6 +622,7 @@ bool CaptionPane::CreateChildren() {
     m_clearButton       = button(L"Clear captions", IDC_BTN_CLEAR);
     m_listenButton      = button(L"Stop caption listening", IDC_BTN_LISTEN);
     m_settingsButton    = button(L"Settings", IDC_BTN_SETTINGS);
+    m_logButton         = button(L"Log", IDC_BTN_LOG);
     m_pickWindowButton  = button(L"Pick up window", IDC_BTN_PICK_WINDOW);
     // The first tile is created hidden and kept for the life of the window.
     // Further picks add tiles under it.
@@ -645,29 +640,12 @@ bool CaptionPane::CreateChildren() {
         kPickOutlineClassName, L"", WS_POPUP, 0, 0, 0, 0, m_frame, nullptr, m_instance, nullptr);
     if (!m_pickOutlineWindow) return false;
 
-    m_hintLabel = ::CreateWindowExW(0, WC_STATICW, L"Double-click empty area to send",
-                                    WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | SS_RIGHT, 0, 0, 10,
-                                    10, m_hwnd,
-                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LBL_HINT)),
-                                    m_instance, nullptr);
-
     m_fontCombo    = combo(IDC_CBO_FONT);
     m_sizeCombo    = combo(IDC_CBO_SIZE);
     m_spacingCombo = combo(IDC_CBO_SPACING);
 
-    // Owner drawing avoids the native status bar's light pane edges leaking
-    // through in dark mode. This is a one-line log panel, so a static control
-    // gives us full control of its background, separator, and text.
-    m_statusBar =
-        ::CreateWindowExW(0, WC_STATICW, L"",
-                          WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | SS_OWNERDRAW | SS_NOPREFIX,
-                          0, 0, 10, 10, m_hwnd,
-                          reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_STATUSBAR)), m_instance,
-                          nullptr);
-
     if (!m_sendButton || !m_saveButton || !m_clearButton || !m_listenButton ||
-        !m_settingsButton || !m_pickWindowButton ||
-        !m_fontCombo || !m_statusBar) {
+        !m_settingsButton || !m_logButton || !m_pickWindowButton || !m_fontCombo) {
         return false;
     }
 
@@ -716,8 +694,7 @@ void CaptionPane::ApplyTheme() {
     DiscardThemeBrushes();
     EnsureThemeBrushes();
 
-    const HWND explorer[] = {m_pressEnterCheck, m_hintLabel, m_rightPanel,
-                             m_bottomPanel,     m_statusBar, m_view.Handle()};
+    const HWND explorer[] = {m_pressEnterCheck, m_rightPanel, m_bottomPanel, m_view.Handle()};
     for (HWND control : explorer)
         caption_theme::SetControlTheme(control, m_darkTheme ? L"DarkMode_Explorer" : L"Explorer");
     m_targets.SetDarkTheme(m_darkTheme);
@@ -737,13 +714,10 @@ void CaptionPane::ApplyTheme() {
 LRESULT CaptionPane::OnCtlColor(HDC dc, HWND control) {
     EnsureThemeBrushes();
 
-    const bool isHint = control == m_hintLabel;
     // The panels, and the controls that sit on the bottom panel, share its fill.
     const bool onPanel = control == m_rightPanel || control == m_bottomPanel ||
-                         control == m_hintLabel || control == m_pressEnterCheck;
-    const COLORREF text =
-        m_darkTheme ? (isHint ? caption_theme::kTextSecondary : caption_theme::kTextPrimary)
-                    : (isHint ? caption_theme::kLightTextSecondary : caption_theme::kLightTextPrimary);
+                         control == m_pressEnterCheck;
+    const COLORREF text = m_darkTheme ? caption_theme::kTextPrimary : caption_theme::kLightTextPrimary;
     const COLORREF background =
         m_darkTheme ? (onPanel ? caption_theme::kPanelBg : caption_theme::kWindowBg)
                     : (onPanel ? caption_theme::kLightPanelBg : caption_theme::kLightWindowBg);
@@ -756,7 +730,8 @@ LRESULT CaptionPane::OnCtlColor(HDC dc, HWND control) {
 }
 
 void CaptionPane::DrawDarkButton(const DRAWITEMSTRUCT& item) const {
-    const bool pressed = (item.itemState & ODS_SELECTED) != 0;
+    const bool pressed = (item.itemState & ODS_SELECTED) != 0 ||
+                         (item.hwndItem == m_logButton && m_logVisible);
     const bool disabled = (item.itemState & ODS_DISABLED) != 0;
     const bool focused = (item.itemState & ODS_FOCUS) != 0;
 
@@ -790,6 +765,8 @@ void CaptionPane::DrawDarkButton(const DRAWITEMSTRUCT& item) const {
         iconGlyph = m_engine.IsPaused() ? L"\uE768" : L"\uE71A";  // Play / Stop
     } else if (item.hwndItem == m_settingsButton) {
         iconGlyph = L"\uE713";  // Settings (gear)
+    } else if (item.hwndItem == m_logButton) {
+        iconGlyph = L"\uE7BA";  // List, used as the app log
     } else if (item.hwndItem == m_pickWindowButton) {
         iconGlyph = L"\uE78B";  // Window with up-arrow (pick up / raise window)
     }
@@ -819,33 +796,6 @@ void CaptionPane::DrawDarkButton(const DRAWITEMSTRUCT& item) const {
     }
 }
 
-void CaptionPane::DrawStatusPanel(const DRAWITEMSTRUCT& item) const {
-    const COLORREF background = m_darkTheme ? caption_theme::kStatusBg : caption_theme::kLightStatusBg;
-    const COLORREF textColor = m_darkTheme ? caption_theme::kTextSecondary : caption_theme::kLightTextSecondary;
-    const COLORREF separator = m_darkTheme ? caption_theme::kSplitterLine : caption_theme::kLightSplitterLine;
-
-    ::SetDCBrushColor(item.hDC, background);
-    ::FillRect(item.hDC, &item.rcItem,
-               reinterpret_cast<HBRUSH>(::GetStockObject(DC_BRUSH)));
-
-    RECT line = item.rcItem;
-    line.bottom = std::min(line.top + std::max(Scaled(1), 1), line.bottom);
-    ::SetDCBrushColor(item.hDC, separator);
-    ::FillRect(item.hDC, &line, reinterpret_cast<HBRUSH>(::GetStockObject(DC_BRUSH)));
-
-    RECT textRect = item.rcItem;
-    textRect.left += Scaled(8);
-    textRect.right -= Scaled(8);
-    textRect.top += std::max(Scaled(1), 1);
-
-    const HGDIOBJ oldFont = m_controlFont ? ::SelectObject(item.hDC, m_controlFont) : nullptr;
-    ::SetBkMode(item.hDC, TRANSPARENT);
-    ::SetTextColor(item.hDC, textColor);
-    ::DrawTextW(item.hDC, m_statusText.c_str(), static_cast<int>(m_statusText.size()), &textRect,
-                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-    if (oldFont) ::SelectObject(item.hDC, oldFont);
-}
-
 void CaptionPane::ApplyControlFont() {
     if (m_controlFont) {
         ::DeleteObject(m_controlFont);
@@ -861,8 +811,8 @@ void CaptionPane::ApplyControlFont() {
         m_controlFont = static_cast<HFONT>(::GetStockObject(DEFAULT_GUI_FONT));
     }
 
-    const HWND controls[] = {m_sendButton, m_pressEnterCheck, m_hintLabel, m_fontCombo,
-                             m_sizeCombo,  m_spacingCombo,    m_statusBar};
+    const HWND controls[] = {m_sendButton, m_pressEnterCheck, m_fontCombo, m_sizeCombo,
+                             m_spacingCombo};
     for (HWND control : controls) {
         if (control) ::SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(m_controlFont), TRUE);
     }
@@ -979,19 +929,11 @@ void CaptionPane::DragSplitterTo(int splitterTop) {
 }
 
 int CaptionPane::LogBarHeight() const {
-    int height = Scaled(kLogHeight);
-    if (const HDC dc = ::GetDC(m_hwnd)) {
-        const HGDIOBJ previous = m_controlFont ? ::SelectObject(dc, m_controlFont) : nullptr;
-        TEXTMETRICW metrics{};
-        if (::GetTextMetricsW(dc, &metrics)) height = metrics.tmHeight + Scaled(8);
-        if (previous) ::SelectObject(dc, previous);
-        ::ReleaseDC(m_hwnd, dc);
-    }
-    return height;
+    return 0;
 }
 
 void CaptionPane::Layout() {
-    if (!m_hwnd || !m_statusBar) return;
+    if (!m_hwnd || !m_sendButton) return;
 
     RECT client{};
     ::GetClientRect(m_hwnd, &client);
@@ -1008,7 +950,7 @@ void CaptionPane::Layout() {
 
     // The side panel runs down the left edge, with a drag strip on its right.
     // Everything else stacks inside the column beside it: caption pane,
-    // splitter, bottom panel, log view.
+    // splitter, and bottom panel.
     const int sideSplitterWidth = Scaled(kSideSplitterWidth);
     const int sidePanelWidth = ClampSidePanelWidth(Scaled(m_settings.sidePanelWidth), clientWidth);
     const int columnLeft = sidePanelWidth + sideSplitterWidth;
@@ -1031,8 +973,6 @@ void CaptionPane::Layout() {
         ::SetWindowPos(m_bottomPanel, HWND_BOTTOM, columnLeft, barTop, columnWidth,
                        std::max(logTop - barTop, 0), SWP_NOACTIVATE);
     }
-    ::SetWindowPos(m_statusBar, nullptr, columnLeft, logTop, columnWidth,
-                   std::max(clientHeight - logTop, 0), SWP_NOZORDER | SWP_NOACTIVATE);
     if (m_rightPanel) {
         ::SetWindowPos(m_rightPanel, HWND_BOTTOM, 0, titleBarExtension, sidePanelWidth,
                        std::max(clientHeight - titleBarExtension, 0), SWP_NOACTIVATE);
@@ -1062,13 +1002,13 @@ void CaptionPane::Layout() {
                    SWP_NOZORDER | SWP_NOACTIVATE);
     left += Scaled(96) + gap;
 
-    const HWND actionButtons[] = {m_listenButton, m_saveButton, m_clearButton, m_settingsButton};
+    const HWND actionButtons[] = {m_listenButton, m_saveButton, m_clearButton, m_settingsButton,
+                                  m_logButton};
     for (HWND control : actionButtons) {
         ::SetWindowPos(control, nullptr, left, rowTop, rowHeight, rowHeight,
                        SWP_NOZORDER | SWP_NOACTIVATE);
         left += rowHeight + gap;
     }
-    const int leftBlockEnd = left;
 
     // Right blocks are laid out from the right edge inwards.
     auto placeRight = [&](HWND control, int& cursor, int top, int width, int height) {
@@ -1081,9 +1021,6 @@ void CaptionPane::Layout() {
     placeRight(m_spacingCombo, cursor, rowTop, Scaled(62), rowHeight);
     placeRight(m_sizeCombo, cursor, rowTop, Scaled(62), rowHeight);
     placeRight(m_fontCombo, cursor, rowTop, Scaled(140), rowHeight);
-    const int hintWidth = std::max(cursor - leftBlockEnd, 0);
-    ::SetWindowPos(m_hintLabel, nullptr, leftBlockEnd, rowTop + Scaled(4), hintWidth, rowHeight,
-                   SWP_NOZORDER | SWP_NOACTIVATE);
 
     update();
 }
@@ -1158,12 +1095,14 @@ void CaptionPane::UpdateWindowTitle() {
     setWindowTitle(QString::fromStdWString(title));
 }
 
+void CaptionPane::setLogVisible(bool visible) {
+    if (m_logVisible == visible) return;
+    m_logVisible = visible;
+    if (m_logButton) ::InvalidateRect(m_logButton, nullptr, TRUE);
+}
+
 void CaptionPane::SetStatus(const std::wstring& text) {
-    m_statusText = text;
-    if (m_statusBar) {
-        ::SetWindowTextW(m_statusBar, text.c_str());
-        ::InvalidateRect(m_statusBar, nullptr, TRUE);
-    }
+    if (!text.empty()) emit logLine(QString::fromStdWString(text));
 }
 
 void CaptionPane::ApplyTypography() {
@@ -1190,6 +1129,12 @@ void CaptionPane::OnCommand(int controlId, int notifyCode) {
 
         case IDC_BTN_SETTINGS:
             OnSettings();
+            return;
+
+        case IDC_BTN_LOG:
+            m_logVisible = !m_logVisible;
+            if (m_logButton) ::InvalidateRect(m_logButton, nullptr, TRUE);
+            emit logToggled(m_logVisible);
             return;
 
         case IDC_BTN_PICK_WINDOW:

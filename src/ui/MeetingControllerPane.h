@@ -17,7 +17,6 @@ class QLabel;
 class QPlainTextEdit;
 class QPushButton;
 class QScrollArea;
-class QStackedWidget;
 class QTabWidget;
 class QThread;
 class UiaWorker;
@@ -31,9 +30,12 @@ public:
     explicit MeetingControllerPane(QWidget* parent = nullptr);
     ~MeetingControllerPane() override;
     const QString& statusMessage() const { return statusMessage_; }
+    void setLogVisible(bool visible);
+    void appendLog(const QString& message);
 
 signals:
     void statusMessageChanged(const QString& message);
+    void logVisibilityChanged(bool visible);
     void scanRequested();
     void inspectRequested(quintptr hwndValue);
     void pickupRequested();
@@ -85,11 +87,8 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
-    QWidget* createPageBar();
     QWidget* createDashboardPage();
     QWidget* createDiagnosticsPage();
-    QWidget* createSettingsPage();
-    QWidget* createAboutPage();
 
     QFrame* createMeetingCard(const ManagedMeeting& meeting);
     void refreshMeetingCards();
@@ -114,14 +113,13 @@ private:
     void setDropHover(QFrame* card);
     void clearDrag();
 
-    void navigateTo(int pageIndex);
     void setStatusMessage(const QString& message);
-    void appendLog(const QString& message);
     void updateUiaStatus(bool ready, const QString& message);
     quintptr selectedWindowHandle() const;
     void applyDarkProfessionalTheme();
 
     QString statusMessage_;
+    QString lastLog_;
     QThread* workerThread_ = nullptr;
     UiaWorker* worker_ = nullptr;
     MeetingBatch* batch_ = nullptr;
@@ -131,15 +129,7 @@ private:
     QStringList batchFailures_;
 
     QWidget* dashboardPage_ = nullptr;
-    QWidget* diagnosticsPage_ = nullptr;
-    QWidget* settingsPage_ = nullptr;
-    QWidget* aboutPage_ = nullptr;
-    QStackedWidget* pageStack_ = nullptr;
-
-    QPushButton* dashboardNavButton_ = nullptr;
-    QPushButton* diagnosticsNavButton_ = nullptr;
-    QPushButton* settingsNavButton_ = nullptr;
-    QPushButton* aboutNavButton_ = nullptr;
+    QWidget* logPanel_ = nullptr;
 
     QPushButton* dashboardPickUpButton_ = nullptr;
     QPushButton* dashboardMuteAllButton_ = nullptr;

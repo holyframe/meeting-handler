@@ -20,6 +20,11 @@ public:
     explicit CaptionPane(QWidget* parent);
     ~CaptionPane() override;
     bool initialize(const Settings& settings);
+    void setLogVisible(bool visible);
+
+signals:
+    void logLine(const QString& text);
+    void logToggled(bool visible);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -43,7 +48,6 @@ private:
     void EnsureThemeBrushes();
     void DiscardThemeBrushes();
     void DrawDarkButton(const DRAWITEMSTRUCT& item) const;
-    void DrawStatusPanel(const DRAWITEMSTRUCT& item) const;
     LRESULT OnCtlColor(HDC dc, HWND control);
     int  LogBarHeight() const;
     int  ClampBottomPanelHeight(int wanted, int clientHeight) const;
@@ -93,7 +97,6 @@ private:
 
     HWND m_sendButton = nullptr;
     HWND m_pressEnterCheck = nullptr;
-    HWND m_hintLabel = nullptr;
     HWND m_fontCombo = nullptr;
     HWND m_sizeCombo = nullptr;
     HWND m_spacingCombo = nullptr;
@@ -103,10 +106,10 @@ private:
     HWND m_clearButton = nullptr;
     HWND m_listenButton = nullptr;
     HWND m_settingsButton = nullptr;
+    HWND m_logButton = nullptr;
     HWND m_pickWindowButton = nullptr;
-    HWND m_statusBar = nullptr;
     HWND m_pickOutlineWindow = nullptr;
-    std::wstring m_statusText;
+    bool m_logVisible = false;
 
     WebInputPicker m_webInputPicker;
     CaptionTargetList m_targets{m_webInputPicker};

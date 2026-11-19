@@ -24,7 +24,6 @@
 #include <QResizeEvent>
 #include <QScrollArea>
 #include <QSizePolicy>
-#include <QStackedWidget>
 #include <QStyle>
 #include <QTabWidget>
 #include <QThread>
@@ -53,17 +52,6 @@ QFrame* makePanel(QWidget* parent, const QString& objectName = "panel")
     auto* panel = new QFrame(parent);
     panel->setObjectName(objectName);
     return panel;
-}
-
-QPushButton* makeNavButton(const QString& text, QWidget* parent)
-{
-    auto* button = new QPushButton(text, parent);
-    button->setObjectName("pageNavButton");
-    button->setCheckable(true);
-    button->setCursor(Qt::PointingHandCursor);
-    button->setMinimumHeight(36);
-    button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-    return button;
 }
 
 QFrame* makeMetricCard(
@@ -128,31 +116,11 @@ MeetingControllerPane::MeetingControllerPane(QWidget* parent)
     shell->setContentsMargins(0, 0, 0, 0);
     shell->setSpacing(0);
 
-    shell->addWidget(createPageBar());
-
-    pageStack_ = new QStackedWidget(this);
-    pageStack_->setObjectName("pageStack");
-
     dashboardPage_ = createDashboardPage();
-    diagnosticsPage_ = createDiagnosticsPage();
-    settingsPage_ = createSettingsPage();
-    aboutPage_ = createAboutPage();
-
-    pageStack_->addWidget(dashboardPage_);
-    pageStack_->addWidget(diagnosticsPage_);
-    pageStack_->addWidget(settingsPage_);
-    pageStack_->addWidget(aboutPage_);
-
-    shell->addWidget(pageStack_, 1);
-
-    connect(dashboardNavButton_, &QPushButton::clicked,
-            this, [this] { navigateTo(0); });
-    connect(diagnosticsNavButton_, &QPushButton::clicked,
-            this, [this] { navigateTo(1); });
-    connect(settingsNavButton_, &QPushButton::clicked,
-            this, [this] { navigateTo(2); });
-    connect(aboutNavButton_, &QPushButton::clicked,
-            this, [this] { navigateTo(3); });
+    shell->addWidget(dashboardPage_, 1);
+    logPanel_ = createDiagnosticsPage();
+    logPanel_->hide();
+    shell->addWidget(logPanel_, 1);
 
     connect(dashboardPickUpButton_, &QPushButton::clicked,
             this, &MeetingControllerPane::requestMeetingTabImport);
@@ -244,7 +212,6 @@ MeetingControllerPane::MeetingControllerPane(QWidget* parent)
             worker_, &QObject::deleteLater);
 
     applyDarkProfessionalTheme();
-    navigateTo(0);
     setStatusMessage(
         "Ready · Pick up meeting tabs to read microphone and sound states");
     workerThread_->start();
@@ -264,28 +231,6 @@ MeetingControllerPane::~MeetingControllerPane()
         workerThread_->quit();
         workerThread_->wait();
     }
-}
-
-QWidget* MeetingControllerPane::createPageBar()
-{
-    auto* bar = new QFrame(this);
-    bar->setObjectName("pageBar");
-
-    auto* layout = new QHBoxLayout(bar);
-    layout->setContentsMargins(20, 10, 20, 10);
-    layout->setSpacing(8);
-
-    dashboardNavButton_ = makeNavButton("Dashboard", bar);
-    diagnosticsNavButton_ = makeNavButton("Live Diagnostics", bar);
-    settingsNavButton_ = makeNavButton("Settings", bar);
-    aboutNavButton_ = makeNavButton("About", bar);
-
-    layout->addWidget(dashboardNavButton_);
-    layout->addWidget(diagnosticsNavButton_);
-    layout->addWidget(settingsNavButton_);
-    layout->addWidget(aboutNavButton_);
-    layout->addStretch();
-    return bar;
 }
 
 QWidget* MeetingControllerPane::createDashboardPage()
@@ -415,16 +360,16 @@ QWidget* MeetingControllerPane::createDashboardPage()
 QWidget* MeetingControllerPane::createDiagnosticsPage()
 {
     auto* page = new QWidget(this);
-    page->setObjectName("pageRoot");
+    page->setObjectName("appLogPanel");
 
     auto* layout = new QVBoxLayout(page);
     layout->setContentsMargins(28, 22, 28, 20);
     layout->setSpacing(16);
 
-    auto* title = new QLabel("Live Diagnostics", page);
-    title->setObjectName("pageTitle");
+    auto* title = new QLabel("Log", page);
+    title->setObjectName("sectionTitle");
     auto* subtitle = makeMutedLabel(
-        "Inspect existing Chrome windows and review their Windows UI Automation accessibility tree.",
+        "Caption actions, meeting actions, and UI Automation events are kept here.",
         page);
     subtitle->setObjectName("pageSubtitle");
     layout->addWidget(title);
@@ -468,10 +413,10 @@ QWidget* MeetingControllerPane::createDiagnosticsPage()
     diagnosticsTabs_->setObjectName("diagnosticsTabs");
 
     liveDiagnostics_ = new QPlainTextEdit(diagnosticsTabs_);
-    liveDiagnostics_->setObjectName("diagnosticsText");
+    liveDiagnostics_->setObjectName("appLog");
     liveDiagnostics_->setReadOnly(true);
     liveDiagnostics_->setPlaceholderText(
-        "Timestamped UI Automation events, scans, warnings, and errors will appear here.");
+        "Caption actions, meeting actions, and UI Automation events appear here.");
 
     accessibilityTree_ = new QPlainTextEdit(diagnosticsTabs_);
     accessibilityTree_->setObjectName("diagnosticsText");
@@ -479,12 +424,12 @@ QWidget* MeetingControllerPane::createDiagnosticsPage()
     accessibilityTree_->setPlaceholderText(
         "Inspect a Chrome window to view its UI Automation accessibility tree.");
 
-    diagnosticsTabs_->addTab(liveDiagnostics_, "Live Activity");
+    diagnosticsTabs_->addTab(liveDiagnostics_, "Log");
     diagnosticsTabs_->addTab(accessibilityTree_, "Accessibility Tree");
     layout->addWidget(diagnosticsTabs_, 1);
 
     auto* note = makeMutedLabel(
-        "Read-only diagnostics. This build does not click page controls or mute/unmute Zoom.",
+        "Inspection reads the accessibility tree and does not change the meeting.",
         page);
     layout->addWidget(note);
 
@@ -494,117 +439,12 @@ QWidget* MeetingControllerPane::createDiagnosticsPage()
     return page;
 }
 
-QWidget* MeetingControllerPane::createSettingsPage()
+void MeetingControllerPane::setLogVisible(bool visible)
 {
-    auto* page = new QWidget(this);
-    page->setObjectName("pageRoot");
-    auto* layout = new QVBoxLayout(page);
-    layout->setContentsMargins(28, 22, 28, 20);
-    layout->setSpacing(16);
-
-    auto* title = new QLabel("Settings", page);
-    title->setObjectName("pageTitle");
-    auto* subtitle = makeMutedLabel(
-        "Application behavior and safety configuration.", page);
-    subtitle->setObjectName("pageSubtitle");
-    layout->addWidget(title);
-    layout->addWidget(subtitle);
-
-    auto* safetyPanel = makePanel(page, "panel");
-    auto* safetyLayout = new QVBoxLayout(safetyPanel);
-    safetyLayout->setContentsMargins(18, 16, 18, 16);
-    safetyLayout->setSpacing(8);
-    auto* safetyHeading = new QLabel("MICROPHONE SAFETY", safetyPanel);
-    safetyHeading->setObjectName("panelHeading");
-    auto* safetyText = new QLabel(
-        "Microphone and sound controls read Zoom's state before acting and verify it "
-        "afterwards. Sound Off leaves computer audio and disconnects the microphone too. "
-        "Sound On rejoins computer audio and reads the resulting microphone state.", safetyPanel);
-    safetyText->setObjectName("settingsBody");
-    safetyText->setWordWrap(true);
-    safetyLayout->addWidget(safetyHeading);
-    safetyLayout->addWidget(safetyText);
-    layout->addWidget(safetyPanel);
-
-    auto* browserPanel = makePanel(page, "panel");
-    auto* browserLayout = new QVBoxLayout(browserPanel);
-    browserLayout->setContentsMargins(18, 16, 18, 16);
-    browserLayout->setSpacing(8);
-    auto* browserHeading = new QLabel("BROWSER INTEGRATION", browserPanel);
-    browserHeading->setObjectName("panelHeading");
-    auto* browserText = new QLabel(
-        "Uses Windows UI Automation to inspect existing Chrome windows. No Chrome "
-        "extension, remote-debugging port, dedicated Chrome profile, or browser "
-        "launch changes are required.", browserPanel);
-    browserText->setObjectName("settingsBody");
-    browserText->setWordWrap(true);
-    browserLayout->addWidget(browserHeading);
-    browserLayout->addWidget(browserText);
-    layout->addWidget(browserPanel);
-    layout->addStretch();
-
-    return page;
-}
-
-QWidget* MeetingControllerPane::createAboutPage()
-{
-    auto* page = new QWidget(this);
-    page->setObjectName("pageRoot");
-    auto* layout = new QVBoxLayout(page);
-    layout->setContentsMargins(28, 22, 28, 20);
-    layout->setSpacing(16);
-
-    auto* title = new QLabel("About Meeting Controller", page);
-    title->setObjectName("pageTitle");
-    auto* subtitle = makeMutedLabel(
-        "A native Windows controller for managing existing Chrome Zoom sessions.",
-        page);
-    subtitle->setObjectName("pageSubtitle");
-    layout->addWidget(title);
-    layout->addWidget(subtitle);
-
-    auto* panel = makePanel(page, "panel");
-    auto* panelLayout = new QVBoxLayout(panel);
-    panelLayout->setContentsMargins(20, 18, 20, 18);
-    panelLayout->setSpacing(10);
-
-    auto* appName = new QLabel("Meeting Controller", panel);
-    appName->setObjectName("sectionTitle");
-    auto* version = makeMutedLabel(QString("Version %1 · Windows UIA feasibility build")
-        .arg(QCoreApplication::applicationVersion()), panel);
-    auto* technology = new QLabel(
-        "C++20 · Qt 6 Widgets · Windows UI Automation · CMake", panel);
-    technology->setObjectName("settingsBody");
-    auto* scope = makeMutedLabel(
-        "Current scope: Chrome window discovery, accessibility-tree inspection, and "
-        "picking up Chrome tabs you choose, and verified microphone and computer-audio control.", panel);
-    panelLayout->addWidget(appName);
-    panelLayout->addWidget(version);
-    panelLayout->addWidget(technology);
-    panelLayout->addWidget(scope);
-
-    layout->addWidget(panel);
-    layout->addStretch();
-    return page;
-}
-
-void MeetingControllerPane::navigateTo(int pageIndex)
-{
-    if (!pageStack_ || pageIndex < 0 || pageIndex >= pageStack_->count())
+    if (!logPanel_ || logPanel_->isVisible() == visible)
         return;
-
-    pageStack_->setCurrentIndex(pageIndex);
-    dashboardNavButton_->setChecked(pageIndex == 0);
-    diagnosticsNavButton_->setChecked(pageIndex == 1);
-    settingsNavButton_->setChecked(pageIndex == 2);
-    aboutNavButton_->setChecked(pageIndex == 3);
-
-    if (pageIndex == 1)
-        setStatusMessage("Live Diagnostics · Read-only UI Automation inspection");
-    else if (pageIndex == 0)
-        setStatusMessage("Dashboard · Microphone automation disabled pending validation");
-    else
-        setStatusMessage("Meeting Controller");
+    logPanel_->setVisible(visible);
+    emit logVisibilityChanged(visible);
 }
 
 void MeetingControllerPane::onInitialized(bool success, const QString& message)
@@ -701,7 +541,7 @@ void MeetingControllerPane::onInspectionFinished(const QJsonObject& result)
     accessibilityTree_->setPlainText(
         QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Indented)));
     diagnosticsTabs_->setCurrentIndex(1);
-    navigateTo(1);
+    setLogVisible(true);
 
     if (result.value("ok").toBool())
     {
@@ -1831,13 +1671,15 @@ void MeetingControllerPane::setStatusMessage(const QString& message)
 {
     statusMessage_ = message;
     emit statusMessageChanged(message);
+    appendLog(message);
 }
 
 void MeetingControllerPane::appendLog(const QString& message)
 {
-    if (!liveDiagnostics_)
+    if (!liveDiagnostics_ || message.isEmpty() || message == lastLog_)
         return;
 
+    lastLog_ = message;
     const QString timestamp =
         QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
     liveDiagnostics_->appendPlainText(QString("[%1] %2").arg(timestamp, message));
