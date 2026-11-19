@@ -19,10 +19,23 @@ MeetingHandlerWindow::MeetingHandlerWindow(const Settings& captionSettings, QSet
     column->setSpacing(0);
     auto* captions = new CaptionPane(workspace);
     auto* controller = new MeetingControllerPane(workspace);
+    auto* log = controller->logPanel();
+    log->setParent(workspace);
+    log->setStyleSheet(controller->styleSheet());
     column->addWidget(captions, 1);
-    column->addWidget(controller, 1);
+    column->addWidget(log, 1);
+    column->addWidget(controller, 0);
     setCentralWidget(workspace);
+    if (layout.value("meetingsCollapsed").toBool())
+        controller->setMeetingsCollapsed(true);
 
+    connect(controller, &MeetingControllerPane::meetingsCollapsedChanged, this,
+            [this](bool collapsed, int contentHeight) {
+                if (!isVisible() || isMaximized() || isFullScreen() || contentHeight <= 0)
+                    return;
+                const int next = height() + (collapsed ? -contentHeight : contentHeight);
+                resize(width(), qMax(minimumHeight(), next));
+            });
     connect(captions, &CaptionPane::logLine, controller, &MeetingControllerPane::appendLog);
     connect(captions, &CaptionPane::logToggled, controller, &MeetingControllerPane::setLogVisible);
     connect(controller, &MeetingControllerPane::logVisibilityChanged, captions,
@@ -45,8 +58,9 @@ MeetingHandlerWindow::MeetingHandlerWindow(const Settings& captionSettings, QSet
             ::SetWindowPos(reinterpret_cast<HWND>(winId()), nullptr, position.x, position.y,
                            0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
-    connect(qApp, &QCoreApplication::aboutToQuit, this, [this, &layout] {
+    connect(qApp, &QCoreApplication::aboutToQuit, this, [this, controller, &layout] {
         layout.setValue("geometry", saveGeometry());
+        layout.setValue("meetingsCollapsed", controller->meetingsCollapsed());
         layout.remove("splitter");
         layout.sync();
     });

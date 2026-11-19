@@ -94,7 +94,10 @@ private slots:
             auto* log = window.findChild<QPlainTextEdit*>("appLog");
             auto* logPanel = window.findChild<QWidget*>("appLogPanel");
             QVERIFY(log && logPanel && !logPanel->isVisible());
+            QCOMPARE(logPanel->parentWidget(), workspace);
             QVERIFY(log->toPlainText().contains("Ready"));
+            auto* collapse = window.findChild<QPushButton*>("collapseMeetingsButton");
+            QVERIFY(collapse && controller->isAncestorOf(collapse));
             const HWND frame = reinterpret_cast<HWND>(window.winId());
             native = reinterpret_cast<HWND>(captions->winId());
             QVERIFY(native && ::GetAncestor(native, GA_ROOT) == frame);
@@ -112,9 +115,12 @@ private slots:
             QVERIFY(window.findChild<QWidget*>("pageStack") == nullptr);
             ::SendMessageW(::GetDlgItem(native, IDC_BTN_LOG), BM_CLICK, 0, 0);
             QTRY_VERIFY(logPanel->isVisible());
+            QTRY_VERIFY(captions->geometry().bottom() < logPanel->geometry().top()
+                && logPanel->geometry().bottom() < controller->geometry().top());
             QVERIFY(::IsWindowVisible(view));
             ::SendMessageW(::GetDlgItem(native, IDC_BTN_LOG), BM_CLICK, 0, 0);
             QTRY_VERIFY(!logPanel->isVisible());
+            QTRY_COMPARE(captions->geometry().bottom() + 1, controller->geometry().top());
 
             // Exercise the production dispatcher with queued Windows keyboard
             // messages, without sending global input or contacting a browser.
@@ -140,6 +146,20 @@ private slots:
             ::PostMessageW(view, WM_KEYDOWN, VK_ESCAPE, 0);
             ::PostMessageW(native, WM_HOTKEY, HOTKEY_SEND, 0);
             QTRY_VERIFY(log->toPlainText().contains("Select caption text before sending."));
+
+            const int expandedCaptions = captions->height();
+            const int expandedWindow = window.height();
+            QTest::mouseClick(collapse, Qt::LeftButton);
+            QTRY_VERIFY(controller->meetingsCollapsed());
+            QVERIFY(!window.findChild<QWidget*>("pageRoot")->isVisible());
+            QVERIFY(collapse->isVisible());
+            QTRY_VERIFY(window.height() < expandedWindow);
+            QTRY_VERIFY(qAbs(captions->height() - expandedCaptions) <= 4);
+            QTRY_COMPARE(captions->geometry().bottom() + 1, controller->geometry().top());
+            QTest::mouseClick(collapse, Qt::LeftButton);
+            QTRY_VERIFY(!controller->meetingsCollapsed());
+            QVERIFY(window.findChild<QWidget*>("pageRoot")->isVisible());
+            QTRY_COMPARE(window.height(), expandedWindow);
 
             dialogOwner = frame;
             QVERIFY(::SetTimer(nullptr, 0, 25, dismissCaptionSettings) != 0);

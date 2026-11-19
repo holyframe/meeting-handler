@@ -829,17 +829,15 @@ private slots:
             window.meetingsLayout_->getItemPosition(item, &row, &column, &rowSpan, &columnSpan);
             return QPoint(column, row);
         };
-        window.meetingsArea_->setFixedWidth(1120);
-        QTRY_COMPARE(lastCell(), QPoint(0, 1));  // three columns
-        window.meetingsArea_->setFixedWidth(820);
-        QTRY_COMPARE(lastCell(), QPoint(1, 1));  // two columns
-        window.meetingsArea_->setFixedHeight(220);
-        QCoreApplication::processEvents();
-        QCOMPARE(lastCell(), QPoint(1, 1));
+        window.meetingsArea_->setFixedWidth(1400);
+        QTRY_COMPARE(lastCell(), QPoint(3, 0));
+        QTRY_COMPARE(window.meetingsArea_->horizontalScrollBar()->maximum(), 0);
         window.meetingsArea_->setFixedWidth(480);
-        QTRY_COMPARE(lastCell(), QPoint(0, 3));  // one column
-        window.meetingsArea_->setFixedWidth(1120);
-        QTRY_COMPARE(lastCell(), QPoint(0, 1));
+        QTRY_COMPARE(lastCell(), QPoint(3, 0));
+        QTRY_VERIFY(window.meetingsArea_->horizontalScrollBar()->maximum() > 0);
+        window.meetingsArea_->setFixedHeight(window.meetingsArea_->height());
+        QCoreApplication::processEvents();
+        QCOMPARE(lastCell(), QPoint(3, 0));
     }
 
     void rendersCardStates()
@@ -883,17 +881,52 @@ private slots:
         auto* sound = activeCard->findChild<QPushButton*>("soundButton");
         QVERIFY(unmute != nullptr);
         QVERIFY(qAbs(unmute->width() * 2 - sound->width() * 3) <= 8);
-        QVERIFY(window.meetingCountValue_->mapTo(&window, QPoint()).x()
-            < window.dashboardSoundOffButton_->mapTo(&window, QPoint()).x());
-        QVERIFY(window.dashboardSoundOffButton_->mapTo(&window, QPoint()).x()
-            < window.uiaValue_->mapTo(&window, QPoint()).x());
+        const auto origin = [&window](QWidget* widget) {
+            return widget->mapTo(&window, QPoint());
+        };
+        const QPoint mute = origin(window.dashboardMuteAllButton_);
+        const QPoint counts = origin(window.meetingCountButton_);
+        const QPoint soundOff = origin(window.dashboardSoundOffButton_);
+        const QPoint connection = origin(window.uiaRefreshButton_);
+        const QPoint pickup = origin(window.dashboardPickUpButton_);
+        QVERIFY(mute.y() < counts.y());
+        QVERIFY(counts.y() < soundOff.y());
+        QVERIFY(soundOff.y() < connection.y());
+        QVERIFY(connection.y() < pickup.y());
+        QVERIFY(qAbs(mute.x() - pickup.x()) <= 2);
+        QVERIFY(mute.x() < window.meetingsArea_->mapTo(&window, QPoint()).x());
+        QCOMPARE(window.dashboardMuteAllButton_->findChild<QLabel*>("railCaption")->text(), QString("Mute all"));
+        QVERIFY(!window.meetingCountButton_->findChild<QLabel*>("railCaption")->isVisible());
+        QCOMPARE(window.dashboardSoundOffButton_->findChild<QLabel*>("railCaption")->text(), QString("Sound off all"));
+        QCOMPARE(window.uiaRefreshButton_->findChild<QLabel*>("railCaption")->text(), QString("Connection"));
+        QCOMPARE(window.dashboardPickUpButton_->findChild<QLabel*>("railCaption")->text(), QString("Pick up tabs"));
+        QVERIFY(window.meetingCountValue_->isVisible());
+        QCOMPARE(window.meetingCountValue_->text(), QString("2/3"));
+        QVERIFY(!window.uiaValue_->isVisible());
+        for (QLabel* label : window.findChildren<QLabel*>())
+        {
+            QVERIFY(!label->text().contains(QStringLiteral("Managed Meetings")));
+            QVERIFY(!label->text().contains(QStringLiteral("Controls read Zoom")));
+            QVERIFY(!label->isVisible() || !label->text().contains(QStringLiteral("Active / total")));
+            QVERIFY(!label->isVisible() || label->text() != QStringLiteral("Idle"));
+        }
         QVERIFY(window.grab().save("meeting-card-sound-states.png"));
         window.resize(1120, 720);
         QTest::qWait(100);
         QVERIFY(window.grab().save("meeting-card-sound-states-minimum.png"));
-        QCOMPARE(window.meetingsArea_->horizontalScrollBar()->maximum(), 0);
-        for (QFrame* card : window.meetingCards_)
-            QVERIFY(card->width() <= window.meetingsArea_->viewport()->width());
+        for (int index = 0; index < window.meetingCards_.size(); ++index)
+        {
+            int row = -1;
+            int column = -1;
+            int rowSpan = 0;
+            int columnSpan = 0;
+            window.meetingsLayout_->getItemPosition(
+                window.meetingsLayout_->indexOf(window.meetingCards_.at(index)),
+                &row, &column, &rowSpan, &columnSpan);
+            QCOMPARE(row, 0);
+            QCOMPARE(column, index);
+            QCOMPARE(window.meetingCards_.at(index)->width(), 300);
+        }
     }
 };
 
