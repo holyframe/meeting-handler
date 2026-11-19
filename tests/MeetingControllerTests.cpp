@@ -1,10 +1,11 @@
-#include "MainWindow.h"
-#include "UiaWorker.h"
-#include "ZoomAudioState.h"
+#include "ui/MeetingControllerPane.h"
+#include "windows/UiaWorker.h"
+#include "meetings/ZoomAudioState.h"
 
 #include <QApplication>
 #include <QFrame>
 #include <QFontDatabase>
+#include <QGridLayout>
 #include <QJsonDocument>
 #include <QLabel>
 #include <QLineEdit>
@@ -14,7 +15,6 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSignalSpy>
-#include <QStatusBar>
 #include <QTest>
 #include <QTimer>
 
@@ -86,12 +86,13 @@ class MeetingControllerTests : public QObject
 {
     Q_OBJECT
 
-    static void populate(MainWindow& window, MainWindow::Sound sound,
-                         MainWindow::Microphone microphone)
+    static void populate(MeetingControllerPane& window, ManagedMeeting::Sound sound,
+                         ManagedMeeting::Microphone microphone)
     {
+        window.resize(1120, 720);
         // UI tests exercise card signals without calling UIA or touching Chrome.
         QObject::disconnect(&window, nullptr, window.worker_, nullptr);
-        MainWindow::ManagedMeeting meeting;
+        ManagedMeeting meeting;
         meeting.windowHandle = "1234";
         meeting.tabRuntimeId = "test-tab";
         meeting.title = "Audio test meeting";
@@ -450,9 +451,9 @@ private slots:
 
     void soundOffButtonTargetsOnlyItsCardAndDisablesWhileBusy()
     {
-        MainWindow window;
-        populate(window, MainWindow::Sound::On, MainWindow::Microphone::Muted);
-        QSignalSpy spy(&window, &MainWindow::audioSetRequested);
+        MeetingControllerPane window;
+        populate(window, ManagedMeeting::Sound::On, ManagedMeeting::Microphone::Muted);
+        QSignalSpy spy(&window, &MeetingControllerPane::audioSetRequested);
         auto* button = window.meetingCards_.first()->findChild<QPushButton*>("soundButton");
         QVERIFY(button);
         QCOMPARE(button->text(), "Sound Off");
@@ -471,9 +472,9 @@ private slots:
 
     void soundOnButtonReconnectsOnlyItsCard()
     {
-        MainWindow window;
-        populate(window, MainWindow::Sound::Off, MainWindow::Microphone::AudioNotConnected);
-        QSignalSpy spy(&window, &MainWindow::audioSetRequested);
+        MeetingControllerPane window;
+        populate(window, ManagedMeeting::Sound::Off, ManagedMeeting::Microphone::AudioNotConnected);
+        QSignalSpy spy(&window, &MeetingControllerPane::audioSetRequested);
         auto* button = window.meetingCards_.first()->findChild<QPushButton*>("soundButton");
         QCOMPARE(button->text(), "Sound On");
         button->click();
@@ -483,44 +484,43 @@ private slots:
 
     void secondCardDoesNotTargetFirstMeeting()
     {
-        MainWindow window;
-        populate(window, MainWindow::Sound::On, MainWindow::Microphone::Muted);
+        MeetingControllerPane window;
+        populate(window, ManagedMeeting::Sound::On, ManagedMeeting::Microphone::Muted);
         auto second = window.meetings_.first();
         second.windowHandle = "5678";
         second.tabRuntimeId = "second-tab";
         second.title = "Second meeting";
-        second.sound = MainWindow::Sound::Off;
-        second.microphone = MainWindow::Microphone::AudioNotConnected;
+        second.sound = ManagedMeeting::Sound::Off;
+        second.microphone = ManagedMeeting::Microphone::AudioNotConnected;
         window.meetings_.append(second);
         window.refreshMeetingCards();
-        QSignalSpy spy(&window, &MainWindow::audioSetRequested);
+        QSignalSpy spy(&window, &MeetingControllerPane::audioSetRequested);
         window.meetingCards_.at(1)->findChild<QPushButton*>("soundButton")->click();
         QCOMPARE(spy.count(), 1);
         QCOMPARE(spy.at(0).at(0).toULongLong(), 0x5678ULL);
         QCOMPARE(spy.at(0).at(1).toString(), "second-tab");
         QCOMPARE(spy.at(0).at(3).toBool(), true);
-        QCOMPARE(window.meetings_.first().sound, MainWindow::Sound::On);
-        QCOMPARE(window.meetings_.first().microphone, MainWindow::Microphone::Muted);
+        QCOMPARE(window.meetings_.first().sound, ManagedMeeting::Sound::On);
+        QCOMPARE(window.meetings_.first().microphone, ManagedMeeting::Microphone::Muted);
     }
 
     void missingSoundReadDoesNotDiscardReadableMicrophone()
     {
-        MainWindow window;
-        populate(window, MainWindow::Sound::Unknown, MainWindow::Microphone::Unknown);
-        window.updateMeetingStates(window.meetings_.first(), {
+        ManagedMeeting meeting;
+        meeting.applyObservation( {
             {"ok", true}, {"state", "muted"}, {"audioState", "unknown"},
             {"audioError", "Audio menu unavailable"}
         });
-        QCOMPARE(window.meetings_.first().microphone, MainWindow::Microphone::Muted);
-        QCOMPARE(window.meetings_.first().sound, MainWindow::Sound::Unknown);
+        QCOMPARE(meeting.microphone, ManagedMeeting::Microphone::Muted);
+        QCOMPARE(meeting.sound, ManagedMeeting::Sound::Unknown);
     }
 
     void unknownSoundReadsBeforeOfferingChange()
     {
-        MainWindow window;
-        populate(window, MainWindow::Sound::Unknown, MainWindow::Microphone::Unknown);
-        QSignalSpy readSpy(&window, &MainWindow::audioReadRequested);
-        QSignalSpy setSpy(&window, &MainWindow::audioSetRequested);
+        MeetingControllerPane window;
+        populate(window, ManagedMeeting::Sound::Unknown, ManagedMeeting::Microphone::Unknown);
+        QSignalSpy readSpy(&window, &MeetingControllerPane::audioReadRequested);
+        QSignalSpy setSpy(&window, &MeetingControllerPane::audioSetRequested);
         auto* button = window.meetingCards_.first()->findChild<QPushButton*>("soundButton");
         QCOMPARE(button->text(), "Read Sound");
         button->click();
@@ -530,8 +530,8 @@ private slots:
 
     void verifiedSoundResultRefreshesBothStatesAndIdentity()
     {
-        MainWindow window;
-        populate(window, MainWindow::Sound::On, MainWindow::Microphone::Muted);
+        MeetingControllerPane window;
+        populate(window, ManagedMeeting::Sound::On, ManagedMeeting::Microphone::Muted);
         const QString oldKey = window.meetings_.first().key();
         window.onAudioConnectionSet({
             {"ok", true}, {"verified", true}, {"requestKey", oldKey},
@@ -539,8 +539,8 @@ private slots:
             {"audioControlName", "Join Audio"}, {"state", "audioNotConnected"},
             {"tabRuntimeId", "replacement-tab"}
         });
-        QCOMPARE(window.meetings_.first().sound, MainWindow::Sound::Off);
-        QCOMPARE(window.meetings_.first().microphone, MainWindow::Microphone::AudioNotConnected);
+        QCOMPARE(window.meetings_.first().sound, ManagedMeeting::Sound::Off);
+        QCOMPARE(window.meetings_.first().microphone, ManagedMeeting::Microphone::AudioNotConnected);
         QCOMPARE(window.meetings_.first().key(), QString("1234/replacement-tab"));
         QCOMPARE(window.meetingCards_.first()->objectName(), QString("meetingCardActive"));
         QCOMPARE(window.meetingCountValue_->text(), QString("1/1"));
@@ -550,8 +550,8 @@ private slots:
 
     void unverifiedSoundResultClearsCachedStates()
     {
-        MainWindow window;
-        populate(window, MainWindow::Sound::On, MainWindow::Microphone::Muted);
+        MeetingControllerPane window;
+        populate(window, ManagedMeeting::Sound::On, ManagedMeeting::Microphone::Muted);
         QTimer::singleShot(0, []
         {
             if (auto* message = qobject_cast<QMessageBox*>(QApplication::activeModalWidget()))
@@ -563,16 +563,16 @@ private slots:
             {"requestKey", window.meetings_.first().key()},
             {"audioState", "disconnected"}, {"state", "audioNotConnected"}
         });
-        QCOMPARE(window.meetings_.first().sound, MainWindow::Sound::Unknown);
-        QCOMPARE(window.meetings_.first().microphone, MainWindow::Microphone::Unknown);
+        QCOMPARE(window.meetings_.first().sound, ManagedMeeting::Sound::Unknown);
+        QCOMPARE(window.meetings_.first().microphone, ManagedMeeting::Microphone::Unknown);
         QCOMPARE(window.meetingCards_.first()->findChild<QPushButton*>("soundButton")->text(), "Read Sound");
         QVERIFY(!window.meetingBusy_);
     }
 
     void renamesCardWithoutChangingChromeTabName()
     {
-        MainWindow window;
-        populate(window, MainWindow::Sound::On, MainWindow::Microphone::Muted);
+        MeetingControllerPane window;
+        populate(window, ManagedMeeting::Sound::On, ManagedMeeting::Microphone::Muted);
         window.meetings_.first().chromeTabName = "Audio test meeting";
         auto* edit = window.meetingCards_.first()->findChild<QLineEdit*>("meetingTitle");
         QVERIFY(edit);
@@ -585,8 +585,8 @@ private slots:
 
     void reordersMeetingsByDragTarget()
     {
-        MainWindow window;
-        populate(window, MainWindow::Sound::On, MainWindow::Microphone::Muted);
+        MeetingControllerPane window;
+        populate(window, ManagedMeeting::Sound::On, ManagedMeeting::Microphone::Muted);
         auto second = window.meetings_.first();
         second.tabRuntimeId = "second-tab";
         second.title = "Second meeting";
@@ -600,8 +600,8 @@ private slots:
 
     void refreshChecksEveryMeetingConnection()
     {
-        MainWindow window;
-        populate(window, MainWindow::Sound::Unknown, MainWindow::Microphone::Unknown);
+        MeetingControllerPane window;
+        populate(window, ManagedMeeting::Sound::Unknown, ManagedMeeting::Microphone::Unknown);
         auto second = window.meetings_.first();
         window.meetings_.first().tabRuntimeId = "new-id";
         second.tabRuntimeId = "second";
@@ -610,7 +610,7 @@ private slots:
         QSignalSpy started(window.batch_, &MeetingBatch::meetingStarted);
         QSignalSpy results(window.batch_, &MeetingBatch::meetingFinished);
         QSignalSpy done(window.batch_, &MeetingBatch::finished);
-        QSignalSpy pickup(&window, &MainWindow::pickupRequested);
+        QSignalSpy pickup(&window, &MeetingControllerPane::pickupRequested);
         QFrame* secondCard = nullptr;
         connect(window.batch_, &MeetingBatch::meetingFinished, this, [&](const QJsonObject& result) {
             if (result.value("requestKey").toString() != "1234/new-id")
@@ -620,7 +620,7 @@ private slots:
             QCOMPARE(window.meetingCards_.first()->property("meetingKey").toString(), "1234/resolved-tab");
             QCOMPARE(window.meetingCards_.first()->findChild<QLabel*>("soundState")->text(), "Sound on");
             QCOMPARE(window.meetingCards_.at(1), secondCard);
-            QCOMPARE(window.meetings_.at(1).sound, MainWindow::Sound::Unknown);
+            QCOMPARE(window.meetings_.at(1).sound, ManagedMeeting::Sound::Unknown);
         });
         window.uiaRefreshButton_->click();
         secondCard = window.meetingCards_.at(1);
@@ -638,7 +638,7 @@ private slots:
         QCOMPARE(window.meetingCountValue_->text(), "2/2");
         QVERIFY(window.batchProgress_->isHidden());
         QVERIFY(window.uiaRefreshButton_->isEnabled());
-        QVERIFY(window.statusBar()->currentMessage().contains("2 verified"));
+        QVERIFY(window.statusMessage().contains("2 verified"));
     }
 
     void cancelRemainingFinishesCurrentAndSkipsTheRest_data()
@@ -651,13 +651,13 @@ private slots:
     void cancelRemainingFinishesCurrentAndSkipsTheRest()
     {
         QFETCH(bool, mute);
-        MainWindow window;
-        populate(window, MainWindow::Sound::On, MainWindow::Microphone::Unmuted);
+        MeetingControllerPane window;
+        populate(window, ManagedMeeting::Sound::On, ManagedMeeting::Microphone::Unmuted);
         auto next = window.meetings_.first();
         next.tabRuntimeId = "already";
-        next.microphone = MainWindow::Microphone::Muted;
+        next.microphone = ManagedMeeting::Microphone::Muted;
         if (!mute)
-            next.sound = MainWindow::Sound::Off;
+            next.sound = ManagedMeeting::Sound::Off;
         window.meetings_.append(next);
         auto skipped = window.meetings_.first();
         skipped.tabRuntimeId = "skipped";
@@ -689,14 +689,14 @@ private slots:
         QCOMPARE(started.size(), 2);
         QCOMPARE(results.size(), 2);
         QCOMPARE(results.last().first().toJsonObject().value("requestKey").toString(), next.key());
-        QCOMPARE(window.meetings_.first().microphone, mute ? MainWindow::Microphone::Muted
-                                                           : MainWindow::Microphone::AudioNotConnected);
-        QCOMPARE(window.meetings_.first().sound, mute ? MainWindow::Sound::On : MainWindow::Sound::Off);
+        QCOMPARE(window.meetings_.first().microphone, mute ? ManagedMeeting::Microphone::Muted
+                                                           : ManagedMeeting::Microphone::AudioNotConnected);
+        QCOMPARE(window.meetings_.first().sound, mute ? ManagedMeeting::Sound::On : ManagedMeeting::Sound::Off);
         QCOMPARE(window.meetings_.last().sound, skipped.sound);
         QCOMPARE(window.meetings_.last().microphone, skipped.microphone);
-        QVERIFY(window.statusBar()->currentMessage().contains(mute ? "1 muted, 1 already muted"
+        QVERIFY(window.statusMessage().contains(mute ? "1 muted, 1 already muted"
                                                                   : "1 turned off, 1 already off"));
-        QVERIFY(window.statusBar()->currentMessage().contains("0 failed, 1 skipped"));
+        QVERIFY(window.statusMessage().contains("0 failed, 1 skipped"));
         QVERIFY(!window.meetingBusy_);
         QVERIFY(window.cancelRemaining_->isHidden());
         QVERIFY(window.dashboardMuteAllButton_->isEnabled());
@@ -720,8 +720,8 @@ private slots:
     void batchRecoversFromWorkerFailure()
     {
         QFETCH(QString, fault);
-        MainWindow window;
-        populate(window, MainWindow::Sound::On, MainWindow::Microphone::Muted);
+        MeetingControllerPane window;
+        populate(window, ManagedMeeting::Sound::On, ManagedMeeting::Microphone::Muted);
         window.meetings_.first().tabRuntimeId = fault;
         window.refreshMeetingCards();
         MeetingBatch batch(nullptr, 1200);
@@ -751,7 +751,7 @@ private slots:
         QVERIFY(!failed.value("verified").toBool());
         QCOMPARE(failed.value("timedOut").toBool(), fault == "stall");
         QCOMPARE(window.meetingCountValue_->text(), "0/1");
-        QCOMPARE(window.meetings_.first().microphone, MainWindow::Microphone::Unknown);
+        QCOMPARE(window.meetings_.first().microphone, ManagedMeeting::Microphone::Unknown);
         QCOMPARE(window.meetingCards_.first()->findChild<QPushButton*>("soundButton")->text(), "Read Sound");
         QCOMPARE(last.value("requestKey").toString(), "1234/last");
         QVERIFY(last.value("verified").toBool());
@@ -801,29 +801,62 @@ private slots:
 
     void doubleClickRequestsTheChromeTab()
     {
-        MainWindow window;
-        populate(window, MainWindow::Sound::On, MainWindow::Microphone::Muted);
-        QSignalSpy spy(&window, &MainWindow::activationRequested);
+        MeetingControllerPane window;
+        populate(window, ManagedMeeting::Sound::On, ManagedMeeting::Microphone::Muted);
+        QSignalSpy spy(&window, &MeetingControllerPane::activationRequested);
         QTest::mouseDClick(window.meetingCards_.first(), Qt::LeftButton, Qt::NoModifier, QPoint(8, 8));
         QCOMPARE(spy.count(), 1);
         QCOMPARE(spy.takeFirst().at(2).toString(), QString("Audio test meeting"));
     }
 
+    void meetingGridFollowsItsViewport()
+    {
+        MeetingControllerPane window;
+        populate(window, ManagedMeeting::Sound::On, ManagedMeeting::Microphone::Muted);
+        for (int i = 1; i <= 3; ++i)
+        {
+            auto meeting = window.meetings_.first();
+            meeting.tabRuntimeId = QString::number(i);
+            window.meetings_.append(meeting);
+        }
+        window.refreshMeetingCards();
+        window.setFixedSize(1320, 720);
+        window.show();
+        const auto lastCell = [&window] {
+            const int item = window.meetingsLayout_->indexOf(window.meetingCards_.last());
+            if (item < 0) return QPoint(-1, -1);
+            int row, column, rowSpan, columnSpan;
+            window.meetingsLayout_->getItemPosition(item, &row, &column, &rowSpan, &columnSpan);
+            return QPoint(column, row);
+        };
+        window.meetingsArea_->setFixedWidth(1120);
+        QTRY_COMPARE(lastCell(), QPoint(0, 1));  // three columns
+        window.meetingsArea_->setFixedWidth(820);
+        QTRY_COMPARE(lastCell(), QPoint(1, 1));  // two columns
+        window.meetingsArea_->setFixedHeight(220);
+        QCoreApplication::processEvents();
+        QCOMPARE(lastCell(), QPoint(1, 1));
+        window.meetingsArea_->setFixedWidth(480);
+        QTRY_COMPARE(lastCell(), QPoint(0, 3));  // one column
+        window.meetingsArea_->setFixedWidth(1120);
+        QTRY_COMPARE(lastCell(), QPoint(0, 1));
+    }
+
     void rendersCardStates()
     {
-        MainWindow window;
-        populate(window, MainWindow::Sound::On, MainWindow::Microphone::Muted);
+        MeetingControllerPane window;
+        populate(window, ManagedMeeting::Sound::On, ManagedMeeting::Microphone::Muted);
         auto disconnected = window.meetings_.first();
         disconnected.tabRuntimeId = "off-tab";
         disconnected.title = "Meeting with audio disconnected";
-        disconnected.sound = MainWindow::Sound::Off;
-        disconnected.microphone = MainWindow::Microphone::AudioNotConnected;
+        disconnected.sound = ManagedMeeting::Sound::Off;
+        disconnected.microphone = ManagedMeeting::Microphone::AudioNotConnected;
         window.meetings_.append(disconnected);
         auto unknown = disconnected;
         unknown.tabRuntimeId = "unknown-tab";
         unknown.title = "Meeting awaiting an audio read";
-        unknown.sound = MainWindow::Sound::Unknown;
-        unknown.microphone = MainWindow::Microphone::Unknown;
+        unknown.sound = ManagedMeeting::Sound::Unknown;
+        unknown.microphone = ManagedMeeting::Microphone::Unknown;
         window.meetings_.append(unknown);
         window.refreshMeetingCards();
         QCOMPARE(window.meetingCards_.at(0)->objectName(), QString("meetingCardActive"));

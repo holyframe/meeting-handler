@@ -15,36 +15,58 @@ if(MSVC)
     add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/W4;/permissive-;/EHsc;/utf-8;/MP>")
 endif()
 
-add_subdirectory(live-caption)
-
-# The combined program uses the Qt controller's widgets and its worker mode.
-set(controller_dir meeting-controller/src)
-add_library(meeting_controls STATIC
-    ${controller_dir}/MainWindow.cpp
-    ${controller_dir}/MeetingBatch.cpp
-    ${controller_dir}/UiaWorker.cpp
-    ${controller_dir}/ChromeWindowEnumerator.cpp
-    ${controller_dir}/UiaTreeInspector.cpp
-    ${controller_dir}/ActiveTabPicker.cpp
-    ${controller_dir}/UiaSupport.cpp
-    ${controller_dir}/ZoomMeetingController.cpp
-    ${controller_dir}/ZoomAudioState.cpp
+# The executable and the regression tests link the same application code.
+add_library(meeting_handler_core STATIC
+    src/ui/MeetingHandlerWindow.cpp
+    src/ui/CaptionPane.cpp
+    src/ui/CaptionTargetList.cpp
+    src/ui/CaptionView.cpp
+    src/ui/MeetingControllerPane.cpp
+    src/ui/SettingsDialog.cpp
+    src/captions/CaptionMerger.cpp
+    src/captions/CaptionSave.cpp
+    src/captions/CaptionSource.cpp
+    src/captions/CaptureEngine.cpp
+    src/captions/Settings.cpp
+    src/captions/TranscriptStore.cpp
+    src/captions/Util.cpp
+    src/meetings/ManagedMeeting.cpp
+    src/meetings/MeetingBatch.cpp
+    src/meetings/ZoomAudioState.cpp
+    src/meetings/ZoomMeetingController.cpp
+    src/windows/ActiveTabPicker.cpp
+    src/windows/ActiveWindowFollower.cpp
+    src/windows/ChromeWindowEnumerator.cpp
+    src/windows/UiaSupport.cpp
+    src/windows/UiaTreeInspector.cpp
+    src/windows/UiaWorker.cpp
+    src/windows/WebInputPicker.cpp
 )
-set_target_properties(meeting_controls PROPERTIES AUTOMOC ON)
-target_include_directories(meeting_controls PUBLIC ${controller_dir})
-target_link_libraries(meeting_controls PUBLIC Qt6::Widgets PRIVATE ole32 oleaut32 user32 uiautomationcore)
+set_target_properties(meeting_handler_core PROPERTIES AUTOMOC ON)
+target_include_directories(meeting_handler_core PUBLIC src resources)
+target_link_libraries(meeting_handler_core
+    PUBLIC Qt6::Widgets
+    PRIVATE advapi32 comctl32 comdlg32 d2d1 dwmapi dwrite gdi32 ole32 oleaut32
+            shell32 shlwapi uiautomationcore user32 uxtheme uuid
+)
+qt_add_resources(meeting_handler_core application_assets
+    PREFIX "/"
+    BASE resources
+    FILES resources/icons/meeting-handler.ico resources/controller.qss
+)
 
-add_library(meeting_workspace STATIC app/Workspace.cpp app/CaptionHost.cpp)
-target_include_directories(meeting_workspace PUBLIC app)
-target_link_libraries(meeting_workspace PUBLIC live_caption meeting_controls)
+# The shared-window test embeds the same Win32 settings dialog and DPI manifest.
+set(app_resources "${CMAKE_CURRENT_BINARY_DIR}/resources")
+file(MAKE_DIRECTORY "${app_resources}")
+configure_file(resources/app.manifest.in "${app_resources}/app.manifest" @ONLY)
+configure_file(resources/app.rc.in "${app_resources}/app.rc" @ONLY)
 
 qt_add_executable(MeetingHandler WIN32
-    app/main.cpp
-    live-caption/resources/app.rc
-    meeting-controller/resources/app.qrc
+    src/main.cpp
+    "${app_resources}/app.rc"
 )
-set_target_properties(MeetingHandler PROPERTIES AUTORCC ON)
-target_link_libraries(MeetingHandler PRIVATE meeting_workspace)
+target_link_libraries(MeetingHandler PRIVATE meeting_handler_core)
+target_compile_definitions(MeetingHandler PRIVATE MEETING_HANDLER_VERSION="${PROJECT_VERSION}")
 if(MSVC)
     # The RC includes the combined app's PerMonitorV2 and common-controls manifest.
     target_link_options(MeetingHandler PRIVATE /MANIFEST:NO)
@@ -54,12 +76,45 @@ if(MSVC)
 endif()
 add_custom_command(TARGET MeetingHandler POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-        "${CMAKE_CURRENT_SOURCE_DIR}/meeting-controller/LICENSE.txt"
+        "${CMAKE_CURRENT_SOURCE_DIR}/licenses/MeetingController-LICENSE.txt"
         "$<TARGET_FILE_DIR:MeetingHandler>/MeetingController-LICENSE.txt"
     VERBATIM)
 
 include(CTest)
-option(MEETING_CONTROLLER_BUILD_TESTS "Build the meeting controller regression suite" ${BUILD_TESTING})
 if(BUILD_TESTING)
-    add_subdirectory(tests)
+    find_package(Qt6 6.5 REQUIRED COMPONENTS Test)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+    foreach(suite IN ITEMS merge_test source_filter_test active_window_follower_test caption_save_test
+                           picker_validation_test picker_async_test selection_test)
+        add_executable(${suite} tests/${suite}.cpp)
+        target_link_libraries(${suite} PRIVATE meeting_handler_core)
+        add_test(NAME caption.${suite} COMMAND ${suite})
+    endforeach()
+    add_test(NAME caption.merge_latency COMMAND merge_test --latency
+        CONFIGURATIONS Release RelWithDebInfo MinSizeRel)
+
+    add_executable(MeetingControllerTests tests/MeetingControllerTests.cpp)
+    set_target_properties(MeetingControllerTests PROPERTIES AUTOMOC ON)
+    target_link_libraries(MeetingControllerTests PRIVATE meeting_handler_core Qt6::Test)
+    target_compile_definitions(MeetingControllerTests PRIVATE MEETING_APP_PATH="$<TARGET_FILE:MeetingHandler>")
+    add_dependencies(MeetingControllerTests MeetingHandler)
+    add_test(NAME controller.regressions COMMAND MeetingControllerTests -platform offscreen
+        -o -,txt -o controller-results.xml,junitxml)
+    set_tests_properties(controller.regressions PROPERTIES TIMEOUT 90)
+
+    add_executable(WorkspaceTests tests/WorkspaceTests.cpp "${app_resources}/app.rc")
+    set_target_properties(WorkspaceTests PROPERTIES AUTOMOC ON)
+    target_link_libraries(WorkspaceTests PRIVATE meeting_handler_core Qt6::Test)
+    if(MSVC)
+        target_link_options(WorkspaceTests PRIVATE /MANIFEST:NO)
+    endif()
+    add_test(NAME workspace.stack COMMAND WorkspaceTests -platform windows
+        -o -,txt -o workspace-results.xml,junitxml)
+    set_tests_properties(workspace.stack PROPERTIES TIMEOUT 45)
+
+    get_property(app_tests DIRECTORY PROPERTY TESTS)
+    set_tests_properties(${app_tests} PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/tests"
+        ENVIRONMENT "QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins"
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 endif()

@@ -1,14 +1,17 @@
-#include "MainWindow.h"
-#include "Workspace.h"
-#include "CaptureEngine.h"
-#include "Settings.h"
+#include "ui/MeetingHandlerWindow.h"
+#include "ui/MeetingControllerPane.h"
+#include "ui/CaptionPane.h"
+#include "captions/CaptureEngine.h"
+#include "captions/Settings.h"
 #include "resource.h"
 
 #include <QApplication>
+#include <QIcon>
 #include <QPushButton>
 #include <QSettings>
 #include <QSplitter>
 #include <QStackedWidget>
+#include <QStatusBar>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
@@ -29,17 +32,18 @@ QRect windowBounds(HWND window) {
 }
 
 void verifyCaptionFits(QSplitter* split) {
-    QWidget* host = split->widget(0);
-    const HWND parent = reinterpret_cast<HWND>(host->winId());
-    const HWND pane = ::FindWindowExW(parent, nullptr, L"LiveCaptionViewMain", nullptr);
-    const QRect slot = windowBounds(parent);
-    QVERIFY(pane && !slot.isEmpty());
-    QCOMPARE(host->width(), split->contentsRect().width());
-    QCOMPARE(host->geometry().bottom() + 1, split->handle(1)->geometry().top());
-    QVERIFY(qAbs(slot.width() - host->width() * host->devicePixelRatioF()) <= 1);
-    QVERIFY(qAbs(slot.height() - host->height() * host->devicePixelRatioF()) <= 1);
-    QCOMPARE(windowBounds(pane), slot);
-    QCOMPARE(windowBounds(::GetDlgItem(pane, IDC_CAPTION_VIEW)).right(), slot.right());
+    auto* captions = qobject_cast<CaptionPane*>(split->widget(0));
+    QVERIFY(captions && !captions->isWindow() && captions->parentWidget() == split);
+    const HWND pane = reinterpret_cast<HWND>(captions->winId());
+    const QRect slot = windowBounds(pane);
+    QVERIFY(!slot.isEmpty());
+    QCOMPARE(captions->width(), split->contentsRect().width());
+    QCOMPARE(captions->geometry().bottom() + 1, split->handle(1)->geometry().top());
+    QVERIFY(qAbs(slot.width() - captions->width() * captions->devicePixelRatioF()) <= 1);
+    QVERIFY(qAbs(slot.height() - captions->height() * captions->devicePixelRatioF()) <= 1);
+    const HWND view = ::GetDlgItem(pane, IDC_CAPTION_VIEW);
+    QVERIFY(view && ::GetParent(view) == pane);
+    QCOMPARE(windowBounds(view).right(), slot.right());
     QCOMPARE(windowBounds(::GetDlgItem(pane, IDC_STATUSBAR)).bottomRight(), slot.bottomRight());
     QVERIFY(windowBounds(::GetDlgItem(pane, IDC_BTN_SETTINGS)).right() <
             windowBounds(::GetDlgItem(pane, IDC_CBO_FONT)).left());
@@ -70,18 +74,21 @@ private slots:
         HWND native = nullptr;
         QByteArray savedSplit;
         {
-            MainWindow window;
-            QVERIFY(installWorkspace(window, settings, layout));
+            MeetingHandlerWindow window(settings, layout);
+            QVERIFY(window.captionsReady());
             window.show();
             QVERIFY(QTest::qWaitForWindowExposed(&window));
             auto* split = window.findChild<QSplitter*>("workspaceSplitter");
             QVERIFY(split && split->count() == 2 && split->orientation() == Qt::Vertical);
             verifyCaptionFits(split);
-            QCOMPARE(split->widget(0)->objectName(), "liveCaptionHost");
-            QCOMPARE(split->widget(1)->objectName(), "appRoot");
+            QVERIFY(!QIcon(":/icons/meeting-handler.ico").pixmap(16, 16).isNull());
+            QCOMPARE(split->widget(0)->grab(QRect(0, 0, 8, 8)).toImage().pixelColor(1, 1),
+                     QColor(32, 32, 32));
+            auto* controller = qobject_cast<MeetingControllerPane*>(split->widget(1));
+            QVERIFY(controller && !controller->isWindow() && !controller->styleSheet().isEmpty());
+            QVERIFY(window.statusBar()->currentMessage().startsWith("Ready"));
             const HWND frame = reinterpret_cast<HWND>(window.winId());
-            const HWND host = reinterpret_cast<HWND>(split->widget(0)->winId());
-            native = ::FindWindowExW(host, nullptr, L"LiveCaptionViewMain", nullptr);
+            native = reinterpret_cast<HWND>(split->widget(0)->winId());
             QVERIFY(native && ::GetAncestor(native, GA_ROOT) == frame);
             QVERIFY((::GetWindowLongPtrW(native, GWL_STYLE) & WS_CHILD) != 0);
             QVERIFY(window.windowTitle().contains("No target selected"));
@@ -103,6 +110,7 @@ private slots:
             for (qsizetype i = 0; i < navigation.size(); ++i) {
                 navigation[i]->click();
                 QCOMPARE(pages->currentIndex(), static_cast<int>(i));
+                QCOMPARE(window.statusBar()->currentMessage(), controller->statusMessage());
                 QVERIFY(::IsWindowVisible(view));
             }
             navigation.front()->click();
@@ -145,14 +153,17 @@ private slots:
             QVERIFY(!layout.value("geometry").toByteArray().isEmpty());
         }
         QVERIFY(!::IsWindow(native));
-        MainWindow reopened;
-        QVERIFY(installWorkspace(reopened, settings, layout));
+        settings.theme = UiTheme::Light;
+        MeetingHandlerWindow reopened(settings, layout);
+        QVERIFY(reopened.captionsReady());
         auto* split = reopened.findChild<QSplitter*>("workspaceSplitter");
         QVERIFY(split);
         QCOMPARE(split->saveState(), savedSplit);
         reopened.show();
         QVERIFY(QTest::qWaitForWindowExposed(&reopened));
         verifyCaptionFits(split);
+        QCOMPARE(split->widget(0)->grab(QRect(0, 0, 8, 8)).toImage().pixelColor(1, 1),
+                 QColor(Qt::white));
         reopened.showMaximized();
         QTRY_VERIFY(reopened.isMaximized());
         QCoreApplication::processEvents();
