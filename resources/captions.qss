@@ -14,7 +14,20 @@ QToolButton { padding: 0; }
 QFrame#captionTargetTile { background: palette(button); border: 1px solid palette(mid); }
 QFrame#captionTargetTile[active="true"] { border-color: palette(text); }
 QFrame#captionTargetTile[removing="true"] { border-color: red; }
-QToolButton#jumpToLatest { border-radius: 16px; }
+QToolButton#jumpToLatest {
+    background: palette(button);
+    color: palette(button-text);
+    border: 1px solid palette(mid);
+    border-radius: 16px;
+    padding: 0;
+    font-family: "Segoe MDL2 Assets";
+    font-size: 14px;
+}
+QToolButton#jumpToLatest:hover {
+    background: palette(mid);
+    border-color: palette(text);
+}
+QToolButton#jumpToLatest:pressed { background: palette(highlight); }
 QCheckBox, QLabel { color: palette(window-text); }
 QDialog { background-color: palette(window); }
 QComboBox QAbstractItemView, QFileDialog QAbstractItemView, QMenu {

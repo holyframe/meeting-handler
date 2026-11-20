@@ -245,6 +245,7 @@ private slots:
             const QSize expandedWindow = window.size();
             QTest::mouseClick(collapse, Qt::LeftButton);
             QTRY_VERIFY(controller->meetingsCollapsed());
+            QCOMPARE(collapse->text(), QStringLiteral("\u25B6"));
             QVERIFY(!window.findChild<QWidget*>("pageRoot")->isVisible());
             QVERIFY(collapse->isVisible());
             QCOMPARE(boundsIn(controller->findChild<QWidget*>("collapseBar"), controller).top(), 0);
@@ -254,6 +255,7 @@ private slots:
             QCOMPARE(window.size(), expandedWindow);
             QTest::mouseClick(collapse, Qt::LeftButton);
             QTRY_VERIFY(!controller->meetingsCollapsed());
+            QVERIFY(collapse->text().contains(QStringLiteral("Meetings (0/0)")));
             QVERIFY(window.findChild<QWidget*>("pageRoot")->isVisible());
             QTRY_COMPARE(columns->sizes(), expandedWidths);
             QCOMPARE(window.size(), expandedWindow);

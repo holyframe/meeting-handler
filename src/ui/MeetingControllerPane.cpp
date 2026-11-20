@@ -23,7 +23,6 @@
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QScrollArea>
-#include <QScrollBar>
 #include <QSizePolicy>
 #include <QStyle>
 #include <QTabWidget>
@@ -323,22 +322,24 @@ QWidget* MeetingControllerPane::createDashboardPage()
     meetingsArea->setObjectName("meetingsScrollArea");
     meetingsArea->setWidgetResizable(true);
     meetingsArea->setFrameShape(QFrame::NoFrame);
-    meetingsArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    meetingsArea->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    meetingsArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    meetingsArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
 
     auto* meetingsContent = new QWidget(meetingsArea);
     meetingsContent->setObjectName("meetingsContent");
-    meetingsContent->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
+    meetingsContent->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Minimum);
     auto* meetingsLayout = new QGridLayout(meetingsContent);
+    meetingsLayout->setSizeConstraint(QLayout::SetNoConstraint);
     meetingsLayout->setContentsMargins(0, 0, 0, 0);
-    meetingsLayout->setHorizontalSpacing(12);
-    meetingsLayout->setVerticalSpacing(0);
+    meetingsLayout->setHorizontalSpacing(0);
+    meetingsLayout->setVerticalSpacing(12);
     meetingsLayout->setAlignment(Qt::AlignTop);
     meetingsLayout_ = meetingsLayout;
 
     auto* emptyCard = makePanel(meetingsContent, "emptyMeetingsCard");
     meetingEmptyCard_ = emptyCard;
     auto* emptyLayout = new QVBoxLayout(emptyCard);
+    emptyLayout->setSizeConstraint(QLayout::SetNoConstraint);
     emptyLayout->setContentsMargins(16, 10, 16, 10);
     emptyLayout->setSpacing(4);
     emptyLayout->setAlignment(Qt::AlignCenter);
@@ -353,7 +354,8 @@ QWidget* MeetingControllerPane::createDashboardPage()
         "Choose Pick up tabs, then select one or more Chrome tabs to import.",
         emptyCard);
     emptyDescription->setAlignment(Qt::AlignCenter);
-    emptyDescription->setMaximumWidth(520);
+    emptyDescription->setMinimumWidth(0);
+    emptyDescription->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 
     emptyLayout->addWidget(emptyIcon);
     emptyLayout->addWidget(emptyTitle);
@@ -361,7 +363,7 @@ QWidget* MeetingControllerPane::createDashboardPage()
 
     meetingsArea->setWidget(meetingsContent);
     meetingsArea->viewport()->installEventFilter(this);
-    contentLayout->addWidget(meetingsArea);
+    contentLayout->addWidget(meetingsArea, 1);
     arrangeDashboard(width());
     layoutMeetingCards();
     refreshActionTooltips();
@@ -374,6 +376,7 @@ void MeetingControllerPane::resizeEvent(QResizeEvent* event)
     QWidget::resizeEvent(event);
     if (!meetingsCollapsed_)
         arrangeDashboard(event->size().width());
+    fitMeetingCards();
 }
 
 void MeetingControllerPane::arrangeDashboard(int width)
@@ -921,7 +924,8 @@ QFrame* MeetingControllerPane::createMeetingCard(const ManagedMeeting& meeting)
     auto* card = makePanel(
         meetingsLayout_->parentWidget(), isActive ? "meetingCardActive" : "meetingCard");
     auto* layout = new QVBoxLayout(card);
-    layout->setContentsMargins(16, 14, 16, 14);
+    layout->setSizeConstraint(QLayout::SetNoConstraint);
+    layout->setContentsMargins(12, 14, 12, 14);
     layout->setSpacing(10);
 
     auto* headerRow = new QHBoxLayout();
@@ -938,6 +942,8 @@ QFrame* MeetingControllerPane::createMeetingCard(const ManagedMeeting& meeting)
     auto* title = new QLineEdit(
         meeting.title.isEmpty() ? QStringLiteral("Zoom meeting") : meeting.title, card);
     title->setObjectName("meetingTitle");
+    title->setMinimumWidth(0);
+    title->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     title->setFrame(false);
     title->setPlaceholderText("Meeting name");
     title->setToolTip("Name shown on this card. The Chrome tab title is not changed.");
@@ -965,6 +971,8 @@ QFrame* MeetingControllerPane::createMeetingCard(const ManagedMeeting& meeting)
         ? QString("Chrome (Window %1)").arg(meeting.windowNumber)
         : meeting.profileName;
     auto* source = makeMutedLabel(sourceText, card);
+    source->setMinimumWidth(0);
+    source->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     source->setAttribute(Qt::WA_TransparentForMouseEvents);
 
     titleColumn->addWidget(title);
@@ -1058,6 +1066,8 @@ QFrame* MeetingControllerPane::createMeetingCard(const ManagedMeeting& meeting)
             ? QString("Chrome tab")
             : QString("Zoom Meeting %1").arg(meeting.meetingId),
         card);
+    identity->setMinimumWidth(0);
+    identity->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     identity->setAttribute(Qt::WA_TransparentForMouseEvents);
     layout->addWidget(identity);
 
@@ -1068,6 +1078,7 @@ QFrame* MeetingControllerPane::createMeetingCard(const ManagedMeeting& meeting)
     {
         auto* button = new QPushButton(label, card);
         button->setObjectName(mute ? "dangerButton" : "secondaryButton");
+        button->setMinimumWidth(0);
         button->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         button->setEnabled(!meetingBusy_);
         connect(button, &QPushButton::clicked,
@@ -1087,6 +1098,7 @@ QFrame* MeetingControllerPane::createMeetingCard(const ManagedMeeting& meeting)
 
     auto* soundButton = new QPushButton(card);
     soundButton->setObjectName("soundButton");
+    soundButton->setMinimumWidth(0);
     soundButton->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     soundButton->setEnabled(!meetingBusy_);
     if (meeting.sound == ManagedMeeting::Sound::Unknown)
@@ -1201,12 +1213,32 @@ void MeetingControllerPane::updateMeetingCounts()
 
 void MeetingControllerPane::refreshCollapseTitle()
 {
-    if (!collapseButton_ || !meetingCountValue_)
+    if (!collapseButton_ || !meetingCountValue_ || !collapseBar_)
         return;
-    const QString mark = meetingsCollapsed_ ? QStringLiteral("\u25B6") : QStringLiteral("\u25C0");
-    collapseButton_->setText(QString("%1  Meetings (%2)").arg(mark, meetingCountValue_->text()));
+    auto* barLayout = qobject_cast<QHBoxLayout*>(collapseBar_->layout());
+    collapseButton_->setProperty("collapsed", meetingsCollapsed_);
     if (meetingsCollapsed_)
-        setFixedWidth(collapseBar_->layout()->sizeHint().width());
+    {
+        collapseButton_->setText(QStringLiteral("\u25B6"));
+        collapseButton_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        if (barLayout)
+            barLayout->setContentsMargins(4, 4, 4, 4);
+        const int icon = qMax(16, collapseBar_->height() - 8);
+        collapseButton_->setFixedSize(icon, icon);
+        setFixedWidth(barLayout ? barLayout->sizeHint().width() : icon + 8);
+    }
+    else
+    {
+        collapseButton_->setText(QString("%1  Meetings (%2)")
+                                      .arg(QStringLiteral("\u25C0"), meetingCountValue_->text()));
+        collapseButton_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        collapseButton_->setMinimumSize(0, 0);
+        collapseButton_->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+        if (barLayout)
+            barLayout->setContentsMargins(8, 4, 8, 4);
+    }
+    collapseButton_->style()->unpolish(collapseButton_);
+    collapseButton_->style()->polish(collapseButton_);
 }
 
 void MeetingControllerPane::refreshBatchCard(const QString& previousKey, const ManagedMeeting& meeting)
@@ -1223,6 +1255,7 @@ void MeetingControllerPane::refreshBatchCard(const QString& previousKey, const M
         replacement->show();
         break;
     }
+    fitMeetingCards();
     updateMeetingCounts();
 }
 
@@ -1243,56 +1276,70 @@ ManagedMeeting* MeetingControllerPane::findMeeting(const QString& key)
 void MeetingControllerPane::layoutMeetingCards()
 {
     const int count = meetingCards_.size();
-    meetingCardColumns_ = std::max(count, 1);
+    meetingCardColumns_ = 1;
     for (QFrame* card : std::as_const(meetingCards_))
         meetingsLayout_->removeWidget(card);
     meetingsLayout_->removeWidget(meetingEmptyCard_);
     for (int column = 0; column < meetingsLayout_->columnCount(); ++column)
         meetingsLayout_->setColumnStretch(column, 0);
+    for (int row = 0; row < meetingsLayout_->rowCount(); ++row)
+        meetingsLayout_->setRowStretch(row, 0);
 
     auto* content = meetingsLayout_->parentWidget();
+    content->setMinimumWidth(0);
+    content->setMaximumWidth(QWIDGETSIZE_MAX);
     if (count == 0)
     {
         meetingEmptyCard_->setMinimumWidth(0);
         meetingEmptyCard_->setMaximumWidth(QWIDGETSIZE_MAX);
+        meetingEmptyCard_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
         meetingsLayout_->setColumnStretch(0, 1);
         meetingsLayout_->addWidget(meetingEmptyCard_, 0, 0);
-        content->setMinimumWidth(0);
-        content->setMaximumWidth(QWIDGETSIZE_MAX);
+        meetingsLayout_->setRowStretch(1, 1);
     }
     else
     {
         for (int index = 0; index < count; ++index)
         {
             QFrame* card = meetingCards_.at(index);
-            card->setFixedWidth(kMeetingCardWidth);
-            meetingsLayout_->addWidget(card, 0, index);
+            card->setMinimumWidth(0);
+            card->setMaximumWidth(QWIDGETSIZE_MAX);
+            card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
+            meetingsLayout_->addWidget(card, index, 0);
         }
-        const int spacing = meetingsLayout_->horizontalSpacing();
-        const auto margins = meetingsLayout_->contentsMargins();
-        const int width = count * kMeetingCardWidth
-            + std::max(count - 1, 0) * spacing
-            + margins.left() + margins.right();
-        content->setMinimumWidth(width);
-        content->setMaximumWidth(width);
+        meetingsLayout_->setColumnStretch(0, 1);
+        meetingsLayout_->setRowStretch(count, 1);
     }
     syncMeetingsStrip();
+    fitMeetingCards();
+}
+
+void MeetingControllerPane::fitMeetingCards()
+{
+    if (!meetingsArea_ || !meetingsLayout_)
+        return;
+    const int available = meetingsArea_->viewport()->width();
+    if (available <= 0)
+        return;
+    const auto fit = [available](QWidget* widget) {
+        if (!widget)
+            return;
+        widget->setFixedWidth(available);
+    };
+    if (meetingCards_.isEmpty())
+        fit(meetingEmptyCard_);
+    else {
+        for (QFrame* card : std::as_const(meetingCards_))
+            fit(card);
+    }
 }
 
 void MeetingControllerPane::syncMeetingsStrip()
 {
-    if (!meetingsArea_ || !meetingsLayout_)
+    if (!meetingsArea_)
         return;
-    int rowHeight = 0;
-    if (meetingCards_.isEmpty() && meetingEmptyCard_)
-    {
-        rowHeight = std::max(meetingEmptyCard_->sizeHint().height(),
-                             meetingEmptyCard_->heightForWidth(meetingsArea_->viewport()->width()));
-    }
-    for (QFrame* card : std::as_const(meetingCards_))
-        rowHeight = std::max(rowHeight, card->sizeHint().height());
-    const int bar = meetingsArea_->horizontalScrollBar()->sizeHint().height();
-    meetingsArea_->setFixedHeight(std::max(rowHeight, 1) + bar);
+    meetingsArea_->setMinimumHeight(0);
+    meetingsArea_->setMaximumHeight(QWIDGETSIZE_MAX);
 }
 
 QFrame* MeetingControllerPane::meetingCardFor(QWidget* widget) const
@@ -1351,9 +1398,8 @@ void MeetingControllerPane::clearDrag()
 
 bool MeetingControllerPane::eventFilter(QObject* watched, QEvent* event)
 {
-    if (event->type() == QEvent::Resize && meetingsArea_ && watched == meetingsArea_->viewport()
-        && meetingCards_.isEmpty())
-        syncMeetingsStrip();
+    if (event->type() == QEvent::Resize && meetingsArea_ && watched == meetingsArea_->viewport())
+        fitMeetingCards();
     const bool entered = event->type() == QEvent::Enter || event->type() == QEvent::HoverEnter;
     const bool left = event->type() == QEvent::Leave || event->type() == QEvent::HoverLeave;
     auto* mouse = dynamic_cast<QMouseEvent*>(event);

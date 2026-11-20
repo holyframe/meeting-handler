@@ -829,7 +829,7 @@ private slots:
             window.meetingsLayout_->getItemPosition(item, &row, &column, &rowSpan, &columnSpan);
             return QPoint(column, row);
         };
-        QTRY_COMPARE(lastCell(), QPoint(3, 0));
+        QTRY_COMPARE(lastCell(), QPoint(0, 3));
         QTRY_COMPARE(window.meetingsArea_->horizontalScrollBar()->maximum(), 0);
         window.resize(window.minimumWidth(), 720);
         QTRY_COMPARE(window.width(), window.minimumWidth());
@@ -852,8 +852,18 @@ private slots:
             }
         }
         QVERIFY(window.meetingsArea_->viewport()->width() >= window.meetingCards_.first()->width());
-        QTRY_COMPARE(lastCell(), QPoint(3, 0));
-        QTRY_VERIFY(window.meetingsArea_->horizontalScrollBar()->maximum() > 0);
+        QTRY_COMPARE(lastCell(), QPoint(0, 3));
+        QTRY_COMPARE(window.meetingCards_.first()->width(), window.meetingsArea_->viewport()->width());
+        const int stackedLeft = bounds(window.meetingCards_.first()).left();
+        const int stackedWidth = window.meetingCards_.first()->width();
+        for (QFrame* card : window.meetingCards_) {
+            QCOMPARE(bounds(card).left(), stackedLeft);
+            QCOMPARE(card->width(), stackedWidth);
+        }
+        QVERIFY(bounds(window.meetingCards_.at(1)).top() >= bounds(window.meetingCards_.first()).bottom());
+        window.resize(window.minimumWidth(), 360);
+        QTRY_COMPARE(window.meetingsArea_->horizontalScrollBar()->maximum(), 0);
+        QTRY_VERIFY(window.meetingsArea_->verticalScrollBar()->maximum() > 0);
         window.resize(1500, 720);
         QTRY_VERIFY(bounds(window.dashboardPickUpButton_).right() < bounds(window.meetingsArea_).left());
         QTRY_COMPARE(window.meetingsArea_->horizontalScrollBar()->maximum(), 0);
@@ -940,9 +950,9 @@ private slots:
             window.meetingsLayout_->getItemPosition(
                 window.meetingsLayout_->indexOf(window.meetingCards_.at(index)),
                 &row, &column, &rowSpan, &columnSpan);
-            QCOMPARE(row, 0);
-            QCOMPARE(column, index);
-            QCOMPARE(window.meetingCards_.at(index)->width(), 300);
+            QCOMPARE(row, index);
+            QCOMPARE(column, 0);
+            QCOMPARE(window.meetingCards_.at(index)->width(), window.meetingsArea_->viewport()->width());
         }
     }
 };

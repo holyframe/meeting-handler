@@ -26,6 +26,10 @@ QPushButton#collapseMeetingsButton {
 QPushButton#collapseMeetingsButton:hover {
     background: #3A3A3A;
 }
+QPushButton#collapseMeetingsButton[collapsed="true"] {
+    padding: 0;
+    text-align: center;
+}
 QFrame#pageBar {
     background: #262626;
     border-bottom: 1px solid #4A4A4A;
@@ -233,6 +237,14 @@ QLabel#countPill {
     border-radius: 9px;
     padding: 3px 8px;
     font-weight: 700;
+}
+QFrame#meetingCard QPushButton#dangerButton,
+QFrame#meetingCard QPushButton#secondaryButton,
+QFrame#meetingCard QPushButton#soundButton,
+QFrame#meetingCardActive QPushButton#dangerButton,
+QFrame#meetingCardActive QPushButton#secondaryButton,
+QFrame#meetingCardActive QPushButton#soundButton {
+    padding: 6px 8px;
 }
 QFrame#meetingCard {
     background: #333333;

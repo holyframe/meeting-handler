@@ -105,6 +105,7 @@ private:
     void refreshCollapseTitle();
     void layoutMeetingCards();
     void syncMeetingsStrip();
+    void fitMeetingCards();
     void removeMeeting(const QString& key);
     void moveMeeting(const QString& fromKey, const QString& toKey);
     void activateMeeting(const QString& key);

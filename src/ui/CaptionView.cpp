@@ -1,6 +1,7 @@
 #include "CaptionView.h"
 
 #include <QApplication>
+#include <QFont>
 #include <QContextMenuEvent>
 #include <QKeyEvent>
 #include <QMenu>
@@ -35,7 +36,9 @@ CaptionView::CaptionView(QWidget* parent)
     viewport()->setCursor(Qt::IBeamCursor);
     viewport()->setAutoFillBackground(false);
     m_jumpButton->setObjectName("jumpToLatest");
-    m_jumpButton->setArrowType(Qt::DownArrow);
+    m_jumpButton->setAutoRaise(true);
+    m_jumpButton->setFont(QFont("Segoe MDL2 Assets", 14));
+    m_jumpButton->setText(QChar(0xE70D));
     m_jumpButton->setAccessibleName(tr("Jump to latest caption"));
     m_jumpButton->setToolTip(m_jumpButton->accessibleName());
     m_jumpButton->setFixedSize(32, 32);
