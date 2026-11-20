@@ -2,11 +2,27 @@
 
 #include <objbase.h>
 
-#include "resource.h"
+#include <QCoreApplication>
+#include <utility>
+
+QEvent::Type CaptionUpdate::eventType() {
+    static const auto type = static_cast<QEvent::Type>(QEvent::registerEventType());
+    return type;
+}
+
+CaptionUpdate::CaptionUpdate(size_t first, std::vector<std::wstring> replacement)
+    : QEvent(eventType()), firstDirtyLine(first), lines(std::move(replacement)) {}
+
+QEvent::Type CaptionStatus::eventType() {
+    static const auto type = static_cast<QEvent::Type>(QEvent::registerEventType());
+    return type;
+}
+
+CaptionStatus::CaptionStatus(const std::wstring& message) : QEvent(eventType()), text(message) {}
 
 CaptureEngine::~CaptureEngine() { Stop(); }
 
-bool CaptureEngine::Start(HWND notifyWindow, const std::wstring& transcriptPath,
+bool CaptureEngine::Start(QObject* receiver, const std::wstring& transcriptPath,
                           int pollIntervalMs, CaptionSourceChoice sourceChoice) {
     if (m_running.load(std::memory_order_acquire)) return true;
 
@@ -19,7 +35,7 @@ bool CaptureEngine::Start(HWND notifyWindow, const std::wstring& transcriptPath,
     m_pollIntervalMs = (pollIntervalMs >= 1 && pollIntervalMs <= 1000)
                            ? static_cast<DWORD>(pollIntervalMs)
                            : kDefaultPollIntervalMs;
-    m_notifyWindow = notifyWindow;
+    m_receiver = receiver;
     m_sourceChoice = sourceChoice;
     m_stopEvent = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);   // manual reset
     m_changeEvent = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);  // auto reset
@@ -91,11 +107,7 @@ bool CaptureEngine::AwaitChange() {
 }
 
 void CaptureEngine::PostStatus(const std::wstring& text) {
-    if (!m_notifyWindow) return;
-    auto* payload = new std::wstring(text);
-    if (!::PostMessageW(m_notifyWindow, WM_APP_STATUS, 0, reinterpret_cast<LPARAM>(payload))) {
-        delete payload;
-    }
+    if (m_receiver) QCoreApplication::postEvent(m_receiver, new CaptionStatus(text));
 }
 
 void CaptureEngine::Run(std::wstring transcriptPath) {
@@ -146,11 +158,6 @@ void CaptureEngine::Run(std::wstring transcriptPath) {
                 m_source.SubscribeToChanges(m_changeEvent);
                 PostStatus(std::wstring(L"Connected to ") + SourceKindName(lastKind) +
                            L" \u2014 reading every " + std::to_wstring(m_pollIntervalMs) + L" ms");
-                if (m_notifyWindow) {
-                    ::PostMessageW(m_notifyWindow, WM_APP_SOURCE_CHANGED,
-                                   static_cast<WPARAM>(lastKind),
-                                   reinterpret_cast<LPARAM>(m_source.SourceWindow()));
-                }
             } else {
                 if (!Sleep(kSearchIntervalMs)) break;
                 continue;
@@ -162,10 +169,6 @@ void CaptureEngine::Run(std::wstring transcriptPath) {
             m_sourceWindow.store(nullptr, std::memory_order_release);
             PostStatus(L"Caption source closed. Reconnecting\u2026");
             searchingAnnounced = true;
-            if (m_notifyWindow) {
-                ::PostMessageW(m_notifyWindow, WM_APP_SOURCE_CHANGED,
-                               static_cast<WPARAM>(SourceKind::None), 0);
-            }
             if (!Sleep(kSearchIntervalMs)) break;
             continue;
         }
@@ -174,14 +177,10 @@ void CaptureEngine::Run(std::wstring transcriptPath) {
             const CaptionMerger::Update update = m_merger.Ingest(snapshot);
             if (update.changed) {
                 const std::vector<std::wstring>& lines = m_merger.Lines();
-                auto* payload = new CaptionUpdate();
-                payload->firstDirtyLine = update.firstDirtyLine;
-                payload->lines.assign(lines.begin() + static_cast<ptrdiff_t>(update.firstDirtyLine),
-                                      lines.end());
-                if (!m_notifyWindow ||
-                    !::PostMessageW(m_notifyWindow, WM_APP_CAPTION_UPDATE, 0,
-                                    reinterpret_cast<LPARAM>(payload))) {
-                    delete payload;
+                if (m_receiver) {
+                    std::vector<std::wstring> changed(lines.begin() + static_cast<ptrdiff_t>(update.firstDirtyLine),
+                                                      lines.end());
+                    QCoreApplication::postEvent(m_receiver, new CaptionUpdate(update.firstDirtyLine, std::move(changed)));
                 }
 
                 // Commit only the lines that have scrolled out of the caption

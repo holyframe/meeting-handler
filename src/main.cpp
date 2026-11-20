@@ -8,7 +8,6 @@
 #include <QSettings>
 
 #include <windows.h>
-#include <commctrl.h>
 #include <objbase.h>
 #include <cstring>
 
@@ -41,8 +40,6 @@ int main(int argc, char** argv) {
         return MeetingBatch::runWorker();
     }
     if (FAILED(::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED))) return 1;
-    INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_WIN95_CLASSES | ICC_STANDARD_CLASSES | ICC_BAR_CLASSES};
-    ::InitCommonControlsEx(&controls);
     const int result = runWindow(argc, argv);
     ::CoUninitialize();
     return result;

@@ -1,9 +1,9 @@
 #pragma once
 
-#include <windows.h>
-
+#include <QString>
 #include "captions/Settings.h"
 
-// Shows a modal settings window. `settings` is updated only when OK is pressed.
-bool ShowSettingsDialog(HWND owner, HINSTANCE instance, Settings& settings);
+class QWidget;
 
+QString captionHotkeyName(unsigned modifiers, unsigned virtualKey);
+bool ShowSettingsDialog(QWidget* owner, Settings& settings);

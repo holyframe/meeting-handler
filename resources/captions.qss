@@ -1,0 +1,25 @@
+QWidget#captionSidebar, QWidget#captionToolbar, QWidget#captionTargets,
+QWidget#targetViewport, QScrollArea#targetScroll { background: palette(alternate-base); }
+QSplitter::handle { background: palette(alternate-base); }
+QSplitter::handle:hover { background: palette(mid); }
+QPushButton, QToolButton, QComboBox, QLineEdit {
+    background-color: palette(button);
+    color: palette(button-text);
+    border: 1px solid palette(mid);
+    padding: 2px 4px;
+}
+QPushButton:pressed, QToolButton:pressed, QToolButton:checked { background-color: palette(highlight); }
+QPushButton:focus, QToolButton:focus, QComboBox:focus, QLineEdit:focus { border-color: palette(text); }
+QToolButton { padding: 0; }
+QFrame#captionTargetTile { background: palette(button); border: 1px solid palette(mid); }
+QFrame#captionTargetTile[active="true"] { border-color: palette(text); }
+QFrame#captionTargetTile[removing="true"] { border-color: red; }
+QToolButton#jumpToLatest { border-radius: 16px; }
+QCheckBox, QLabel { color: palette(window-text); }
+QDialog { background-color: palette(window); }
+QComboBox QAbstractItemView, QFileDialog QAbstractItemView, QMenu {
+    color: palette(text);
+    background-color: palette(base);
+    selection-background-color: palette(highlight);
+    selection-color: palette(text);
+}

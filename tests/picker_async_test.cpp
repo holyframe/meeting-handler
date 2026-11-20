@@ -3,11 +3,15 @@
 #define WEBINPUT_PICKER_TESTING
 #include "windows/WebInputPicker.cpp"
 #include "ui/CaptionTargetList.h"
-#include "resource.h"
+#include <QApplication>
+#include <QFrame>
+#include <QMouseEvent>
+#include <QPointer>
+#include <QTest>
+#include <QToolButton>
 
 #include <atomic>
 #include <chrono>
-#include <commctrl.h>
 #include <cstdio>
 
 struct WebInputPickerTestAccess {
@@ -254,53 +258,65 @@ void RetryAndOwnership() {
           "result for a different native window is never displayed");
 }
 void TargetListSelectionAndRemoval() {
-    INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_STANDARD_CLASSES};
-    ::InitCommonControlsEx(&controls);
-    HWND parent = ::CreateWindowExW(0, L"STATIC", L"", WS_POPUP, 0, 0, 320, 220,
-                                    nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
-    Check(parent != nullptr, "create a private target-list window");
-    if (!parent) return;
+    QWidget parent;
+    parent.resize(320, 220);
     WebInputPicker picker;
-    HWND first = nullptr;
+    QPointer<QFrame> first;
     {
         int changes = 0;
-        std::wstring status;
-        CaptionTargetList list(picker);
-        Check(list.Create(parent, [&] { ++changes; }, [&](const std::wstring& text) { status = text; }),
-              "create the original hidden target tile");
-        first = ::GetDlgItem(parent, IDC_SELECTED_WINDOW);
-        Access::AddTestTabs(picker, parent);
-        list.SetBounds({0, 25, 240, 200}, 96);
+        QString status;
+        CaptionTargetList list(picker, &parent);
+        list.setGeometry(0, 25, 240, 175);
+        QObject::connect(&list, &CaptionTargetList::selectionChanged, [&] { ++changes; });
+        QObject::connect(&list, &CaptionTargetList::statusChanged, [&](const QString& value) { status = value; });
+        first = list.findChild<QFrame*>("captionTargetTile");
+        Check(first && first->isHidden(), "empty target list has a hidden tile");
+        Access::AddTestTabs(picker, reinterpret_cast<HWND>(parent.winId()));
         list.Refresh();
-        HWND second = ::FindWindowExW(parent, nullptr, L"STATIC", L"Selected window: Second tab");
-        RECT firstRect{}, secondRect{};
-        Check(first && second && ::GetWindowRect(first, &firstRect) &&
-              ::GetWindowRect(second, &secondRect) && secondRect.top > firstRect.bottom,
+        parent.show();
+        QCoreApplication::processEvents();
+        auto tiles = list.findChildren<QFrame*>("captionTargetTile");
+        if (!first || tiles.size() != 2) { Check(false, "create two picked tab controls"); return; }
+        auto* second = tiles.at(1);
+        Check(second->accessibleName() == "Selected window: Second tab" &&
+              second->geometry().top() > first->geometry().bottom(),
               "picked tabs have distinct controls in the saved order");
-
-        const auto click = [](HWND tile, int x, int y) {
-            ::SendMessageW(tile, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x, y));
-            ::SendMessageW(tile, WM_LBUTTONUP, 0, MAKELPARAM(x, y));
-        };
-        click(second, 8, 8);
+        QTest::mouseClick(second, Qt::LeftButton, {}, QPoint(8, 8));
         Check(picker.SelectedName() == L"Second tab" && changes == 1, "selecting a tile updates the send target");
-        ::SendMessageW(second, WM_RBUTTONDOWN, MK_RBUTTON, MAKELPARAM(8, 8));
+        const auto dragSecondOverFirst = [&] {
+            QTest::mousePress(second, Qt::LeftButton, {}, QPoint(8, 8));
+            const QPoint drop = first->mapToGlobal(first->rect().center());
+            QMouseEvent move(QEvent::MouseMove, second->mapFromGlobal(drop), drop,
+                             Qt::NoButton, Qt::LeftButton, {});
+            QCoreApplication::sendEvent(second, &move);
+            QTest::mouseRelease(second, Qt::LeftButton, {}, QPoint(8, 8));
+            QCoreApplication::processEvents();
+        };
+        dragSecondOverFirst();
+        Check(picker.PickedName(0) == L"Second tab" && picker.SelectedName() == L"Second tab" &&
+              second->geometry().top() < first->geometry().top(), "reordering moves the tile and preserves the active target");
+        dragSecondOverFirst();
+        Check(picker.PickedName(0) == L"First tab", "dragging the tile back restores the original order");
+        QTest::mousePress(second, Qt::RightButton, {}, QPoint(8, 8));
         Check(list.CancelRemoval() && picker.PickedCount() == 2, "cancelling a drag keeps both tabs");
-        const int closeX = secondRect.right - secondRect.left - 10;
-        const int closeY = (secondRect.bottom - secondRect.top) / 2;
-        click(second, closeX, closeY);
-        Check(picker.SelectedName() == L"First tab" && status == L"Selected tab removed." &&
+        QTest::mouseRelease(second, Qt::RightButton, {}, QPoint(8, 8));
+        second->findChild<QToolButton*>("closeTarget")->click();
+        Check(picker.SelectedName() == L"First tab" && status == "Selected tab removed." &&
               changes == 2, "closing a tab selects the surviving target");
-        click(first, closeX, closeY);
-        Check(picker.PickedCount() == 0 && ::GetDlgItem(parent, IDC_SELECTED_WINDOW) == first &&
-              !(::GetWindowLongPtrW(first, GWL_STYLE) & WS_VISIBLE), "empty list keeps its original hidden tile");
+        QTest::mousePress(first, Qt::RightButton, {}, QPoint(8, 8));
+        const QPoint outside = parent.frameGeometry().bottomRight() + QPoint(50, 50);
+        QMouseEvent release(QEvent::MouseButtonRelease, first->mapFromGlobal(outside), outside,
+                            Qt::RightButton, Qt::NoButton, {});
+        QCoreApplication::sendEvent(first, &release);
+        Check(picker.PickedCount() == 0 && first && first->isHidden(),
+              "right-dragging outside removes the tab and leaves an empty list");
     }
-    Check(!::IsWindow(first), "destroying the list releases its child controls");
-    ::DestroyWindow(parent);
+    Check(first.isNull(), "destroying the list releases its child controls");
 }
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    QApplication app(argc, argv);
     BusyWorkerAndCache();
     ActiveScanAndWindowSwitch();
     Cancellation();

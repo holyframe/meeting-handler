@@ -820,7 +820,7 @@ private slots:
             window.meetings_.append(meeting);
         }
         window.refreshMeetingCards();
-        window.setFixedSize(1320, 720);
+        window.resize(1500, 720);
         window.show();
         const auto lastCell = [&window] {
             const int item = window.meetingsLayout_->indexOf(window.meetingCards_.last());
@@ -829,15 +829,34 @@ private slots:
             window.meetingsLayout_->getItemPosition(item, &row, &column, &rowSpan, &columnSpan);
             return QPoint(column, row);
         };
-        window.meetingsArea_->setFixedWidth(1400);
         QTRY_COMPARE(lastCell(), QPoint(3, 0));
         QTRY_COMPARE(window.meetingsArea_->horizontalScrollBar()->maximum(), 0);
-        window.meetingsArea_->setFixedWidth(480);
+        window.resize(window.minimumWidth(), 720);
+        QTRY_COMPARE(window.width(), window.minimumWidth());
+        const auto bounds = [&window](QWidget* widget) {
+            return QRect(widget->mapTo(&window, QPoint()), widget->size());
+        };
+        QTRY_VERIFY(bounds(window.dashboardPickUpButton_).bottom() < bounds(window.meetingsArea_).top());
+        QCOMPARE(bounds(window.dashboardMuteAllButton_).top(), bounds(window.uiaRefreshButton_).top());
+        QCOMPARE(bounds(window.dashboardSoundOffButton_).top(), bounds(window.dashboardPickUpButton_).top());
+        QVERIFY(bounds(window.dashboardMuteAllButton_).bottom() < bounds(window.dashboardSoundOffButton_).top());
+        for (auto* button : {window.dashboardMuteAllButton_, window.uiaRefreshButton_,
+                             window.dashboardSoundOffButton_, window.dashboardPickUpButton_}) {
+            for (auto* label : button->findChildren<QLabel*>()) {
+                if (!label->isVisible()) continue;
+                QVERIFY(bounds(button).contains(bounds(label)));
+                const auto ink = label->fontMetrics().tightBoundingRect(label->text()).size();
+                const auto space = label->contentsRect().size();
+                QVERIFY2(space.width() >= ink.width() && space.height() >= ink.height(),
+                         qPrintable(button->objectName() + '/' + label->objectName()));
+            }
+        }
+        QVERIFY(window.meetingsArea_->viewport()->width() >= window.meetingCards_.first()->width());
         QTRY_COMPARE(lastCell(), QPoint(3, 0));
         QTRY_VERIFY(window.meetingsArea_->horizontalScrollBar()->maximum() > 0);
-        window.meetingsArea_->setFixedHeight(window.meetingsArea_->height());
-        QCoreApplication::processEvents();
-        QCOMPARE(lastCell(), QPoint(3, 0));
+        window.resize(1500, 720);
+        QTRY_VERIFY(bounds(window.dashboardPickUpButton_).right() < bounds(window.meetingsArea_).left());
+        QTRY_COMPARE(window.meetingsArea_->horizontalScrollBar()->maximum(), 0);
     }
 
     void rendersCardStates()
@@ -885,23 +904,21 @@ private slots:
             return widget->mapTo(&window, QPoint());
         };
         const QPoint mute = origin(window.dashboardMuteAllButton_);
-        const QPoint counts = origin(window.meetingCountButton_);
         const QPoint soundOff = origin(window.dashboardSoundOffButton_);
         const QPoint connection = origin(window.uiaRefreshButton_);
         const QPoint pickup = origin(window.dashboardPickUpButton_);
-        QVERIFY(mute.y() < counts.y());
-        QVERIFY(counts.y() < soundOff.y());
-        QVERIFY(soundOff.y() < connection.y());
-        QVERIFY(connection.y() < pickup.y());
+        QVERIFY(mute.y() < connection.y());
+        QVERIFY(connection.y() < soundOff.y());
+        QVERIFY(soundOff.y() < pickup.y());
         QVERIFY(qAbs(mute.x() - pickup.x()) <= 2);
         QVERIFY(mute.x() < window.meetingsArea_->mapTo(&window, QPoint()).x());
         QCOMPARE(window.dashboardMuteAllButton_->findChild<QLabel*>("railCaption")->text(), QString("Mute all"));
-        QVERIFY(!window.meetingCountButton_->findChild<QLabel*>("railCaption")->isVisible());
+        QVERIFY(window.findChild<QPushButton*>("railCountButton") == nullptr);
         QCOMPARE(window.dashboardSoundOffButton_->findChild<QLabel*>("railCaption")->text(), QString("Sound off all"));
         QCOMPARE(window.uiaRefreshButton_->findChild<QLabel*>("railCaption")->text(), QString("Connection"));
         QCOMPARE(window.dashboardPickUpButton_->findChild<QLabel*>("railCaption")->text(), QString("Pick up tabs"));
-        QVERIFY(window.meetingCountValue_->isVisible());
         QCOMPARE(window.meetingCountValue_->text(), QString("2/3"));
+        QVERIFY(window.collapseButton_->text().contains(QStringLiteral("Meetings (2/3)")));
         QVERIFY(!window.uiaValue_->isVisible());
         for (QLabel* label : window.findChildren<QLabel*>())
         {

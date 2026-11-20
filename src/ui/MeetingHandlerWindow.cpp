@@ -5,40 +5,64 @@
 #include <QApplication>
 #include <QScreen>
 #include <QSettings>
+#include <QSplitter>
 #include <QVBoxLayout>
 
-MeetingHandlerWindow::MeetingHandlerWindow(const Settings& captionSettings, QSettings& layout) {
+MeetingHandlerWindow::MeetingHandlerWindow(const Settings& captionSettings, QSettings& layout)
+    : sidebarWidth_(captionSettings.sidePanelWidth),
+      meetingColumnWidth_(qBound(1, layout.value("meetingColumnWidth", 360).toInt(), QWIDGETSIZE_MAX)) {
     setWindowFlag(Qt::FramelessWindowHint, captionSettings.compactView);
     setWindowFlag(Qt::WindowStaysOnTopHint, captionSettings.compactView || captionSettings.alwaysOnTop);
 
-    setMinimumWidth(1120);
     auto* workspace = new QWidget(this);
     workspace->setObjectName("workspace");
     auto* column = new QVBoxLayout(workspace);
     column->setContentsMargins(0, 0, 0, 0);
     column->setSpacing(0);
-    auto* captions = new CaptionPane(workspace);
-    auto* controller = new MeetingControllerPane(workspace);
-    auto* log = controller->logPanel();
-    log->setParent(workspace);
-    log->setStyleSheet(controller->styleSheet());
-    column->addWidget(captions, 1);
-    column->addWidget(log, 1);
-    column->addWidget(controller, 0);
-    setCentralWidget(workspace);
-    if (layout.value("meetingsCollapsed").toBool())
-        controller->setMeetingsCollapsed(true);
+    auto* dragStrip = new QWidget(workspace);
+    dragStrip->setObjectName("windowDragStrip");
+    dragStrip->setFixedHeight(28);
+    column->addWidget(dragStrip);
 
-    connect(controller, &MeetingControllerPane::meetingsCollapsedChanged, this,
-            [this](bool collapsed, int contentHeight) {
-                if (!isVisible() || isMaximized() || isFullScreen() || contentHeight <= 0)
-                    return;
-                const int next = height() + (collapsed ? -contentHeight : contentHeight);
-                resize(width(), qMax(minimumHeight(), next));
-            });
-    connect(captions, &CaptionPane::logLine, controller, &MeetingControllerPane::appendLog);
-    connect(captions, &CaptionPane::logToggled, controller, &MeetingControllerPane::setLogVisible);
-    connect(controller, &MeetingControllerPane::logVisibilityChanged, captions,
+    columns_ = new QSplitter(Qt::Horizontal, workspace);
+    columns_->setObjectName("workspaceColumns");
+    columns_->setChildrenCollapsible(false);
+    columns_->setHandleWidth(6);
+    auto* sidebar = new QWidget;
+    sidebar->setObjectName("captionSidebar");
+    sidebar->setMinimumWidth(56);
+    columns_->addWidget(sidebar);
+    controller_ = new MeetingControllerPane(columns_);
+    columns_->addWidget(controller_);
+    auto* captions = new CaptionPane(sidebar, dragStrip, columns_);
+    columns_->addWidget(captions);
+    columns_->setStretchFactor(0, 0);
+    columns_->setStretchFactor(1, 0);
+    columns_->setStretchFactor(2, 1);
+    column->addWidget(columns_, 1);
+    auto* log = controller_->logPanel();
+    log->setParent(workspace);
+    log->setStyleSheet(controller_->styleSheet());
+    column->addWidget(log, 1);
+    setCentralWidget(workspace);
+    const int columnsMinimum = sidebar->minimumWidth() + controller_->minimumWidth()
+        + captions->minimumWidth() + 2 * columns_->handleWidth();
+    setMinimumWidth(qMax(columnsMinimum, log->minimumSizeHint().width()));
+    if (layout.value("meetingsCollapsed").toBool())
+        controller_->setMeetingsCollapsed(true);
+
+    connect(columns_, &QSplitter::splitterMoved, this, [this, captions] {
+        const auto widths = columns_->sizes();
+        sidebarWidth_ = widths.at(0);
+        captions->setTargetSidebarWidth(sidebarWidth_);
+        if (!controller_->meetingsCollapsed()) meetingColumnWidth_ = widths.at(1);
+    });
+    connect(controller_, &MeetingControllerPane::meetingsCollapsedChanged, this, [this] {
+        setColumnWidths(columns_->sizes().first());
+    });
+    connect(captions, &CaptionPane::logLine, controller_, &MeetingControllerPane::appendLog);
+    connect(captions, &CaptionPane::logToggled, controller_, &MeetingControllerPane::setLogVisible);
+    connect(controller_, &MeetingControllerPane::logVisibilityChanged, captions,
             &CaptionPane::setLogVisible);
     connect(captions, &QWidget::windowTitleChanged, this, [this](const QString& title) {
         setWindowTitle(QStringLiteral("Meeting Handler — ") + title);
@@ -58,10 +82,31 @@ MeetingHandlerWindow::MeetingHandlerWindow(const Settings& captionSettings, QSet
             ::SetWindowPos(reinterpret_cast<HWND>(winId()), nullptr, position.x, position.y,
                            0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
-    connect(qApp, &QCoreApplication::aboutToQuit, this, [this, controller, &layout] {
+    connect(qApp, &QCoreApplication::aboutToQuit, this, [this, &layout] {
         layout.setValue("geometry", saveGeometry());
-        layout.setValue("meetingsCollapsed", controller->meetingsCollapsed());
+        layout.setValue("meetingsCollapsed", controller_->meetingsCollapsed());
+        layout.setValue("meetingColumnWidth", meetingColumnWidth_);
         layout.remove("splitter");
         layout.sync();
     });
+}
+
+void MeetingHandlerWindow::showEvent(QShowEvent* event) {
+    QMainWindow::showEvent(event);
+    if (!restoreColumns_) return;
+    centralWidget()->layout()->activate();
+    setColumnWidths(sidebarWidth_);
+    restoreColumns_ = false;
+}
+
+void MeetingHandlerWindow::setColumnWidths(int sidebarWidth) {
+    const int available = columns_->width() - 2 * columns_->handleWidth();
+    const int sidebarMin = columns_->widget(0)->minimumWidth();
+    const int meetingsMin = controller_->minimumWidth();
+    const int transcriptMin = columns_->widget(2)->minimumWidth();
+    const int side = qBound(sidebarMin, sidebarWidth,
+                            qMax(sidebarMin, available - meetingsMin - transcriptMin));
+    const int middle = controller_->meetingsCollapsed() ? meetingsMin
+        : qBound(meetingsMin, meetingColumnWidth_, qMax(meetingsMin, available - side - transcriptMin));
+    columns_->setSizes({side, middle, qMax(transcriptMin, available - side - middle)});
 }

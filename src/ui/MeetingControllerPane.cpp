@@ -36,6 +36,9 @@
 namespace
 {
 constexpr int kMeetingCardWidth = 300;
+constexpr int kActionsRailWidth = 188;
+constexpr int kContentMargin = 12;
+constexpr int kMeetingsColumnMinimum = kMeetingCardWidth + 2 * kContentMargin;
 
 QLabel* makeMutedLabel(const QString& text, QWidget* parent)
 {
@@ -72,6 +75,7 @@ QPushButton* makeRailButton(
     button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
 
     auto* row = new QHBoxLayout(button);
+    row->setSizeConstraint(QLayout::SetMinimumSize);
     row->setContentsMargins(10, 8, 10, 8);
     row->setSpacing(8);
 
@@ -98,7 +102,8 @@ MeetingControllerPane::MeetingControllerPane(QWidget* parent)
 {
     setObjectName("meetingControllerPane");
     setAttribute(Qt::WA_StyledBackground);
-    setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    setMinimumWidth(kMeetingsColumnMinimum);
+    setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     auto* shell = new QVBoxLayout(this);
     shell->setContentsMargins(0, 0, 0, 0);
     shell->setSpacing(0);
@@ -109,7 +114,7 @@ MeetingControllerPane::MeetingControllerPane(QWidget* parent)
     auto* barLayout = new QHBoxLayout(collapseBar_);
     barLayout->setContentsMargins(8, 4, 8, 4);
     barLayout->setSpacing(0);
-    collapseButton_ = new QPushButton(QStringLiteral("\u25BC  Meetings"), collapseBar_);
+    collapseButton_ = new QPushButton(collapseBar_);
     collapseButton_->setObjectName("collapseMeetingsButton");
     collapseButton_->setCursor(Qt::PointingHandCursor);
     collapseButton_->setAccessibleName("Collapse meetings");
@@ -118,8 +123,10 @@ MeetingControllerPane::MeetingControllerPane(QWidget* parent)
     barLayout->addWidget(collapseButton_);
 
     dashboardPage_ = createDashboardPage();
+    refreshCollapseTitle();
     shell->addWidget(collapseBar_);
     shell->addWidget(dashboardPage_, 1);
+    shell->addStretch(0);
     logPanel_ = createDiagnosticsPage();
     logPanel_->hide();
 
@@ -245,28 +252,24 @@ QWidget* MeetingControllerPane::createDashboardPage()
     page->setObjectName("pageRoot");
     page->setAttribute(Qt::WA_StyledBackground);
 
-    auto* layout = new QHBoxLayout(page);
+    dashboardLayout_ = new QBoxLayout(QBoxLayout::LeftToRight, page);
+    auto* layout = dashboardLayout_;
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
     auto* rail = new QFrame(page);
     rail->setObjectName("controllerRail");
-    rail->setFixedWidth(188);
-    auto* railLayout = new QVBoxLayout(rail);
-    railLayout->setContentsMargins(8, 10, 8, 10);
-    railLayout->setSpacing(8);
-    railLayout->setAlignment(Qt::AlignTop);
+    actionsLayout_ = new QGridLayout(rail);
+    actionsLayout_->setContentsMargins(8, 10, 8, 10);
+    actionsLayout_->setSpacing(8);
+    actionsLayout_->setAlignment(Qt::AlignTop);
 
     dashboardMuteAllButton_ = makeRailButton(rail, QChar(0xE720), "railMuteButton", "Mute all", nullptr);
     dashboardMuteAllButton_->setEnabled(false);
 
-    QVBoxLayout* countText = nullptr;
-    meetingCountButton_ = makeRailButton(rail, QChar(0xE716), "railCountButton", "Meeting counts", &countText);
-    if (auto* caption = meetingCountButton_->findChild<QLabel*>("railCaption"))
-        caption->hide();
-    meetingCountValue_ = railText("0/0", "railValue", meetingCountButton_);
-    countText->addWidget(meetingCountValue_);
-    meetingCountDetail_ = railText("Active / total", "railDetail", meetingCountButton_);
+    meetingCountValue_ = railText("0/0", "railValue", page);
+    meetingCountValue_->hide();
+    meetingCountDetail_ = railText("Active / total", "railDetail", page);
     meetingCountDetail_->hide();
 
     dashboardSoundOffButton_ = makeRailButton(rail, QChar(0xE74F), "railSoundButton", "Sound off all", nullptr);
@@ -286,18 +289,13 @@ QWidget* MeetingControllerPane::createDashboardPage()
         rail, QChar(0xE710), "railPickupButton", "Pick up tabs", nullptr);
     dashboardPickUpButton_->setAccessibleName("Pick up meeting tabs");
 
-    railLayout->addWidget(dashboardMuteAllButton_);
-    railLayout->addWidget(meetingCountButton_);
-    railLayout->addWidget(dashboardSoundOffButton_);
-    railLayout->addWidget(uiaRefreshButton_);
-    railLayout->addWidget(dashboardPickUpButton_);
-    railLayout->addStretch();
     layout->addWidget(rail);
 
     auto* content = new QWidget(page);
     auto* contentLayout = new QVBoxLayout(content);
-    contentLayout->setContentsMargins(12, 8, 12, 8);
+    contentLayout->setContentsMargins(kContentMargin, 8, kContentMargin, 8);
     contentLayout->setSpacing(8);
+    contentLayout->setAlignment(Qt::AlignTop);
     layout->addWidget(content, 1);
 
     meetingCountLabel_ = new QLabel("0", content);
@@ -311,6 +309,7 @@ QWidget* MeetingControllerPane::createDashboardPage()
     meetingHeader->setSpacing(8);
     batchProgress_ = new QLabel(batchRow_);
     batchProgress_->setObjectName("batchProgress");
+    batchProgress_->setWordWrap(true);
     cancelRemaining_ = new QPushButton("Cancel remaining", batchRow_);
     cancelRemaining_->setObjectName("secondaryButton");
     cancelRemaining_->setToolTip("Finish the current meeting and skip the remaining meetings.");
@@ -349,8 +348,9 @@ QWidget* MeetingControllerPane::createDashboardPage()
     emptyIcon->setAlignment(Qt::AlignCenter);
     auto* emptyTitle = new QLabel("No meetings picked up", emptyCard);
     emptyTitle->setObjectName("emptyTitle");
+    emptyTitle->setAlignment(Qt::AlignCenter);
     auto* emptyDescription = makeMutedLabel(
-        "Use Pick up meeting tabs on the left, then select one or more Chrome tabs to import.",
+        "Choose Pick up tabs, then select one or more Chrome tabs to import.",
         emptyCard);
     emptyDescription->setAlignment(Qt::AlignCenter);
     emptyDescription->setMaximumWidth(520);
@@ -360,11 +360,44 @@ QWidget* MeetingControllerPane::createDashboardPage()
     emptyLayout->addWidget(emptyDescription);
 
     meetingsArea->setWidget(meetingsContent);
+    meetingsArea->viewport()->installEventFilter(this);
     contentLayout->addWidget(meetingsArea);
+    arrangeDashboard(width());
     layoutMeetingCards();
     refreshActionTooltips();
 
     return page;
+}
+
+void MeetingControllerPane::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    if (!meetingsCollapsed_)
+        arrangeDashboard(event->size().width());
+}
+
+void MeetingControllerPane::arrangeDashboard(int width)
+{
+    const bool compact = width < kActionsRailWidth + kMeetingsColumnMinimum;
+    const auto direction = compact ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight;
+    if (actionsLayout_->count() && dashboardLayout_->direction() == direction)
+        return;
+    dashboardLayout_->setDirection(direction);
+    auto* rail = actionsLayout_->parentWidget();
+    rail->setMinimumWidth(compact ? 0 : kActionsRailWidth);
+    rail->setMaximumWidth(compact ? QWIDGETSIZE_MAX : kActionsRailWidth);
+    rail->setSizePolicy(compact ? QSizePolicy::Expanding : QSizePolicy::Fixed,
+                        compact ? QSizePolicy::Fixed : QSizePolicy::Expanding);
+    const int columns = compact ? 2 : 1;
+    int index = 0;
+    for (auto* button : {dashboardMuteAllButton_, uiaRefreshButton_, dashboardSoundOffButton_, dashboardPickUpButton_})
+    {
+        actionsLayout_->removeWidget(button);
+        actionsLayout_->addWidget(button, index / columns, index % columns);
+        ++index;
+    }
+    actionsLayout_->setColumnStretch(0, 1);
+    actionsLayout_->setColumnStretch(1, compact ? 1 : 0);
 }
 
 QWidget* MeetingControllerPane::createDiagnosticsPage()
@@ -462,24 +495,18 @@ void MeetingControllerPane::setMeetingsCollapsed(bool collapsed)
 {
     if (!dashboardPage_ || !collapseBar_ || meetingsCollapsed_ == collapsed)
         return;
-    const int shownHeight = dashboardPage_->height();
-    const int contentHeight = collapsed
-        ? (shownHeight > 0 ? shownHeight : dashboardPage_->sizeHint().height())
-        : (lastDashboardHeight_ > 0 ? lastDashboardHeight_ : dashboardPage_->sizeHint().height());
-    if (collapsed)
-        lastDashboardHeight_ = contentHeight;
     meetingsCollapsed_ = collapsed;
     dashboardPage_->setVisible(!collapsed);
-    setMaximumHeight(collapsed ? collapseBar_->minimumHeight() : QWIDGETSIZE_MAX);
-    setSizePolicy(QSizePolicy::Preferred, collapsed ? QSizePolicy::Fixed : QSizePolicy::Maximum);
-    collapseButton_->setText(collapsed ? QStringLiteral("\u25B2  Meetings")
-                                       : QStringLiteral("\u25BC  Meetings"));
+    if (!collapsed)
+    {
+        setMaximumWidth(QWIDGETSIZE_MAX);
+        setMinimumWidth(kMeetingsColumnMinimum);
+        arrangeDashboard(width());
+    }
     collapseButton_->setAccessibleName(collapsed ? "Expand meetings" : "Collapse meetings");
     collapseButton_->setToolTip(collapsed ? "Show the meeting controls" : "Hide the meeting controls");
-    if (QLayout* paneLayout = layout())
-        paneLayout->invalidate();
-    updateGeometry();
-    emit meetingsCollapsedChanged(collapsed, contentHeight);
+    refreshCollapseTitle();
+    emit meetingsCollapsedChanged(collapsed);
 }
 
 void MeetingControllerPane::onInitialized(bool success, const QString& message)
@@ -1143,8 +1170,6 @@ void MeetingControllerPane::refreshActionTooltips()
     dashboardMuteAllButton_->setToolTip(meetings_.isEmpty()
         ? needMeetings
         : QStringLiteral("Switches to each meeting tab in turn and mutes it, verifying each result."));
-    meetingCountButton_->setToolTip(QString("Meeting counts · %1\n%2")
-                                         .arg(meetingCountValue_->text(), meetingCountDetail_->text()));
     dashboardSoundOffButton_->setToolTip(meetings_.isEmpty()
         ? needMeetings
         : QStringLiteral("Leaves computer audio for every meeting. Sound turns off and the microphone disconnects. "
@@ -1171,8 +1196,17 @@ void MeetingControllerPane::updateMeetingCounts()
     meetingCountValue_->setText(QString("%1/%2").arg(active).arg(meetings_.size()));
     meetingCountDetail_->setText(meetings_.isEmpty() ? "No meetings picked up yet" : "Active / total");
     meetingCountLabel_->setText(QString::number(meetings_.size()));
-    meetingCountButton_->setToolTip(QString("Meeting counts · %1\n%2")
-                                         .arg(meetingCountValue_->text(), meetingCountDetail_->text()));
+    refreshCollapseTitle();
+}
+
+void MeetingControllerPane::refreshCollapseTitle()
+{
+    if (!collapseButton_ || !meetingCountValue_)
+        return;
+    const QString mark = meetingsCollapsed_ ? QStringLiteral("\u25B6") : QStringLiteral("\u25C0");
+    collapseButton_->setText(QString("%1  Meetings (%2)").arg(mark, meetingCountValue_->text()));
+    if (meetingsCollapsed_)
+        setFixedWidth(collapseBar_->layout()->sizeHint().width());
 }
 
 void MeetingControllerPane::refreshBatchCard(const QString& previousKey, const ManagedMeeting& meeting)
@@ -1249,7 +1283,12 @@ void MeetingControllerPane::syncMeetingsStrip()
 {
     if (!meetingsArea_ || !meetingsLayout_)
         return;
-    int rowHeight = meetingEmptyCard_ ? meetingEmptyCard_->sizeHint().height() : 0;
+    int rowHeight = 0;
+    if (meetingCards_.isEmpty() && meetingEmptyCard_)
+    {
+        rowHeight = std::max(meetingEmptyCard_->sizeHint().height(),
+                             meetingEmptyCard_->heightForWidth(meetingsArea_->viewport()->width()));
+    }
     for (QFrame* card : std::as_const(meetingCards_))
         rowHeight = std::max(rowHeight, card->sizeHint().height());
     const int bar = meetingsArea_->horizontalScrollBar()->sizeHint().height();
@@ -1312,6 +1351,9 @@ void MeetingControllerPane::clearDrag()
 
 bool MeetingControllerPane::eventFilter(QObject* watched, QEvent* event)
 {
+    if (event->type() == QEvent::Resize && meetingsArea_ && watched == meetingsArea_->viewport()
+        && meetingCards_.isEmpty())
+        syncMeetingsStrip();
     const bool entered = event->type() == QEvent::Enter || event->type() == QEvent::HoverEnter;
     const bool left = event->type() == QEvent::Leave || event->type() == QEvent::HoverLeave;
     auto* mouse = dynamic_cast<QMouseEvent*>(event);

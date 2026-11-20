@@ -1,21 +1,16 @@
-// Checks CaptionView's text selection against a real pane, with no caption
-// source involved: the lines are fed straight into the view and the mouse
-// gestures are synthesised.
-
-#include <windows.h>
-
+// Exercise transcript gestures in Qt logical coordinates without generating desktop input.
+#include "ui/CaptionView.h"
+#include <QApplication>
+#include <QMouseEvent>
+#include <QScrollBar>
+#include <QTest>
+#include <QToolButton>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-#include "ui/CaptionView.h"
-#include "resource.h"
-
 namespace {
-
 int g_failures = 0;
-int g_lastCommand = 0;
-
 void Check(bool condition, const std::string& label) {
     std::printf("%-62s %s\n", label.c_str(), condition ? "PASS" : "FAIL");
     if (!condition) ++g_failures;
@@ -39,14 +34,6 @@ void CheckText(const std::wstring& actual, const std::wstring& expected, const s
     }
 }
 
-LRESULT CALLBACK ParentProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
-    if (message == WM_COMMAND) {
-        g_lastCommand = LOWORD(wParam);
-        return 0;
-    }
-    return ::DefWindowProcW(hwnd, message, wParam, lParam);
-}
-
 // The transcript joined the way a selection over all of it should come back.
 std::wstring Joined(const std::vector<std::wstring>& lines) {
     std::wstring out;
@@ -57,68 +44,31 @@ std::wstring Joined(const std::vector<std::wstring>& lines) {
     return out;
 }
 
-void Down(HWND hwnd, int x, int y, WPARAM flags = 0) {
-    ::SendMessageW(hwnd, WM_LBUTTONDOWN, flags, MAKELPARAM(x, y));
+void Mouse(QWidget* widget, QEvent::Type type, int x, int y, Qt::KeyboardModifiers mods = {}) {
+    const QPoint local(x, y);
+    const auto button = type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton;
+    const auto held = type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton;
+    QMouseEvent event(type, local, widget->mapToGlobal(local), button, held, mods);
+    QCoreApplication::sendEvent(widget, &event);
 }
-void Move(HWND hwnd, int x, int y) {
-    ::SendMessageW(hwnd, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(x, y));
+void Down(QWidget* w, int x, int y, Qt::KeyboardModifiers mods = {}) { Mouse(w, QEvent::MouseButtonPress, x, y, mods); }
+void Move(QWidget* w, int x, int y) { Mouse(w, QEvent::MouseMove, x, y); }
+void Up(QWidget* w, int x, int y) { Mouse(w, QEvent::MouseButtonRelease, x, y); }
+void DoubleClick(QWidget* w, int x, int y) {
+    Down(w, x, y);
+    Mouse(w, QEvent::MouseButtonDblClick, x, y);
+    Up(w, x, y);
 }
-void Up(HWND hwnd, int x, int y) {
-    ::SendMessageW(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(x, y));
-}
-void DoubleClick(HWND hwnd, int x, int y) {
-    Down(hwnd, x, y);
-    ::SendMessageW(hwnd, WM_LBUTTONDBLCLK, 0, MAKELPARAM(x, y));
-    Up(hwnd, x, y);
-}
-
-void Pump(int milliseconds) {
-    const ULONGLONG deadline = ::GetTickCount64() + static_cast<ULONGLONG>(milliseconds);
-    MSG msg;
-    while (::GetTickCount64() < deadline) {
-        while (::PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-            ::TranslateMessage(&msg);
-            ::DispatchMessageW(&msg);
-        }
-        ::Sleep(5);
-    }
 }
 
-}  // namespace
-
-int main() {
-    const HINSTANCE instance = ::GetModuleHandleW(nullptr);
-
-    WNDCLASSEXW wc{};
-    wc.cbSize = sizeof(wc);
-    wc.lpfnWndProc = ParentProc;
-    wc.hInstance = instance;
-    wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
-    wc.hbrBackground = ::GetSysColorBrush(COLOR_BTNFACE);
-    wc.lpszClassName = L"SelectionProbeHost";
-    ::RegisterClassExW(&wc);
-
-    constexpr int kWidth = 760;
-    constexpr int kHeight = 300;
-
-    // Exercise sizing, selection and mouse capture on a real native child.
-    const HWND parent = ::CreateWindowExW(WS_EX_NOACTIVATE, L"SelectionProbeHost", L"Selection probe",
-                                          WS_POPUP | WS_VISIBLE | WS_BORDER, 120, 120, kWidth,
-                                          kHeight, nullptr, nullptr, instance, nullptr);
-    if (!parent) {
-        std::printf("Could not create the host window.\n");
-        return 1;
-    }
-
-    CaptionView view;
-    if (!CaptionView::RegisterWindowClass(instance) ||
-        !view.Create(parent, instance, IDC_CAPTION_VIEW)) {
-        std::printf("Could not create the caption pane.\n");
-        return 1;
-    }
-    ::SetWindowPos(view.Handle(), nullptr, 0, 0, kWidth, kHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+int main(int argc, char** argv) {
+    QApplication app(argc, argv);
+    QWidget parent;
+    CaptionView view(&parent);
+    view.resize(760, 300);
+    parent.resize(view.size());
+    parent.show();
     view.SetTypography(L"Segoe UI", 14, 1.3);
-
     const std::vector<std::wstring> lines = {
         L"So we could learn where the system is folding in the real world.",
         L"Monitoring is missing, and the edge cases that exist in real scenarios "
@@ -128,7 +78,7 @@ int main() {
     };
     view.QueueUpdate(0, lines);
     view.Present();
-    Pump(60);
+    QTest::qWait(60);
 
     // --- Clear followed by an absolute-index update -----------------------
     // The capture merger retains its absolute transcript position when only
@@ -147,8 +97,7 @@ int main() {
     view.QueueUpdate(0, lines);
     view.Present();
 
-    // Geometry: the line-select gutter is 120 device pixels at 96 dpi, and this
-    // process is dpi-unaware, so a point just past it lands on the first glyph.
+    // Gestures use Qt logical pixels at the same font size in every DPI configuration.
     constexpr int kGutterX = 10;
     constexpr int kFirstGlyphX = 121;
     constexpr int kFirstGlyphY = 14;
@@ -160,9 +109,9 @@ int main() {
     constexpr int kLine3Y = 145;
 
     // --- Dragging ----------------------------------------------------------
-    Down(view.Handle(), kFirstGlyphX, kFirstGlyphY);
-    Move(view.Handle(), 4000, kPastEndY);
-    Up(view.Handle(), 4000, kPastEndY);
+    Down(view.viewport(), kFirstGlyphX, kFirstGlyphY);
+    Move(view.viewport(), 4000, kPastEndY);
+    Up(view.viewport(), 4000, kPastEndY);
     CheckText(view.SelectedText(), Joined(lines), "drag past the last line selects everything");
 
     view.ClearSelection();
@@ -172,31 +121,30 @@ int main() {
     CheckText(view.SelectedText(), Joined(lines), "select all returns the whole transcript");
 
     // A drag that ends where it started is a plain click, and selects nothing.
-    Down(view.Handle(), kFirstGlyphX, kFirstGlyphY);
-    Up(view.Handle(), kFirstGlyphX, kFirstGlyphY);
+    Down(view.viewport(), kFirstGlyphX, kFirstGlyphY);
+    Up(view.viewport(), kFirstGlyphX, kFirstGlyphY);
     Check(!view.HasSelection(), "a plain click collapses the selection");
 
     // --- Words -------------------------------------------------------------
-    DoubleClick(view.Handle(), kFirstGlyphX, kFirstGlyphY);
+    DoubleClick(view.viewport(), kFirstGlyphX, kFirstGlyphY);
     CheckText(view.SelectedText(), L"So", "double-click on a word selects that word");
 
     // Jitter between the double-click and the button coming up must not
     // collapse the word back to a caret.
-    DoubleClick(view.Handle(), kFirstGlyphX, kFirstGlyphY);
-    Move(view.Handle(), kFirstGlyphX + 1, kFirstGlyphY);
-    Up(view.Handle(), kFirstGlyphX + 1, kFirstGlyphY);
+    DoubleClick(view.viewport(), kFirstGlyphX, kFirstGlyphY);
+    Move(view.viewport(), kFirstGlyphX + 1, kFirstGlyphY);
+    Up(view.viewport(), kFirstGlyphX + 1, kFirstGlyphY);
     CheckText(view.SelectedText(), L"So", "a twitch after double-click keeps the word");
 
-    g_lastCommand = 0;
-    DoubleClick(view.Handle(), 400, kPastEndY);
-    Check(g_lastCommand != IDC_BTN_SEND, "double-click below the text does not send");
+    DoubleClick(view.viewport(), 400, kPastEndY);
+    Check(!view.HasSelection(), "double-click below the text selects no word");
 
     // --- Shift-click -------------------------------------------------------
     view.ClearSelection();
-    Down(view.Handle(), kFirstGlyphX, kFirstGlyphY);
-    Up(view.Handle(), kFirstGlyphX, kFirstGlyphY);
-    Down(view.Handle(), 4000, kPastEndY, MK_SHIFT);
-    Up(view.Handle(), 4000, kPastEndY);
+    Down(view.viewport(), kFirstGlyphX, kFirstGlyphY);
+    Up(view.viewport(), kFirstGlyphX, kFirstGlyphY);
+    Down(view.viewport(), 4000, kPastEndY, Qt::ShiftModifier);
+    Up(view.viewport(), 4000, kPastEndY);
     CheckText(view.SelectedText(), Joined(lines), "shift-click extends from the last click");
 
     // --- Live updates: clamp ------------------------------------------------
@@ -210,9 +158,9 @@ int main() {
 
     // --- Sticky end: grows with captions -----------------------------------
     view.ClearSelection();
-    Down(view.Handle(), kFirstGlyphX, kFirstGlyphY);
-    Move(view.Handle(), 4000, kPastEndY);
-    Up(view.Handle(), 4000, kPastEndY);
+    Down(view.viewport(), kFirstGlyphX, kFirstGlyphY);
+    Move(view.viewport(), 4000, kPastEndY);
+    Up(view.viewport(), 4000, kPastEndY);
     CheckText(view.SelectedText(), Joined(revised), "sticky setup reaches the transcript end");
 
     revised.back() = L"short and then longer again";
@@ -229,7 +177,7 @@ int main() {
 
     // A selection that stops short must not be pulled along.
     view.ClearSelection();
-    DoubleClick(view.Handle(), kFirstGlyphX, kFirstGlyphY);
+    DoubleClick(view.viewport(), kFirstGlyphX, kFirstGlyphY);
     const std::wstring frozen = view.SelectedText();
     view.QueueUpdate(revised.size(), {L"should not join the selection"});
     view.Present();
@@ -238,21 +186,17 @@ int main() {
     // Shrinking the pane used to jump to the bottom whenever stick-to-bottom was
     // set (including when the transcript still fitted on screen), which scrolled
     // a mid-pane highlight out of sight and looked like the selection was gone.
-    RECT before{};
-    ::GetClientRect(view.Handle(), &before);
-    const int newHeight = std::max((before.bottom - before.top) / 2, 80L);
-    ::SetWindowPos(view.Handle(), nullptr, 0, 0, before.right - before.left, newHeight,
-                   SWP_NOMOVE | SWP_NOZORDER);
-    Pump(40);
+    view.resize(view.width(), std::max(view.height() / 2, 80));
+    QTest::qWait(40);
     CheckText(view.SelectedText(), frozen, "selection survives a caption pane height change");
 
     // --- Gutter line select ------------------------------------------------
     view.QueueUpdate(0, lines);
     view.Present();
-    Pump(40);
+    QTest::qWait(40);
 
-    Down(view.Handle(), kGutterX, kLine2Y);
-    Up(view.Handle(), kGutterX, kLine2Y);
+    Down(view.viewport(), kGutterX, kLine2Y);
+    Up(view.viewport(), kGutterX, kLine2Y);
     const std::wstring tailFromLine2 = lines[2] + L"\r\n" + lines[3];
     CheckText(view.SelectedText(), tailFromLine2,
               "gutter click selects from the clicked line through the transcript end");
@@ -266,36 +210,36 @@ int main() {
     view.QueueUpdate(0, lines);
     view.Present();
 
-    Down(view.Handle(), kGutterX, kLine0Y);
-    Move(view.Handle(), kGutterX, kLine2Y);
-    Up(view.Handle(), kGutterX, kLine2Y);
+    Down(view.viewport(), kGutterX, kLine0Y);
+    Move(view.viewport(), kGutterX, kLine2Y);
+    Up(view.viewport(), kGutterX, kLine2Y);
     CheckText(view.SelectedText(), lines[0] + L"\r\n" + lines[1] + L"\r\n" + lines[2] + L"\r\n",
               "gutter drag down takes whole lines");
 
-    Down(view.Handle(), kGutterX, kLine2Y);
-    Move(view.Handle(), kGutterX, kLine0Y);
-    Up(view.Handle(), kGutterX, kLine0Y);
+    Down(view.viewport(), kGutterX, kLine2Y);
+    Move(view.viewport(), kGutterX, kLine0Y);
+    Up(view.viewport(), kGutterX, kLine0Y);
     CheckText(view.SelectedText(), lines[0] + L"\r\n" + lines[1] + L"\r\n" + lines[2] + L"\r\n",
               "gutter drag up flips the anchor so the origin row stays whole");
 
     view.ClearSelection();
-    Down(view.Handle(), kGutterX, kLine0Y);
-    Up(view.Handle(), kGutterX, kLine0Y);
-    Down(view.Handle(), kGutterX, kLine3Y, MK_SHIFT);
-    Up(view.Handle(), kGutterX, kLine3Y);
+    Down(view.viewport(), kGutterX, kLine0Y);
+    Up(view.viewport(), kGutterX, kLine0Y);
+    Down(view.viewport(), kGutterX, kLine3Y, Qt::ShiftModifier);
+    Up(view.viewport(), kGutterX, kLine3Y);
     CheckText(view.SelectedText(), Joined(lines), "shift-click in the gutter extends by lines");
 
     // Gutter drag stays line-granular after the pointer wanders over the text.
-    Down(view.Handle(), kGutterX, kLine0Y);
-    Move(view.Handle(), kFirstGlyphX + 80, kLine2Y);
-    Up(view.Handle(), kFirstGlyphX + 80, kLine2Y);
+    Down(view.viewport(), kGutterX, kLine0Y);
+    Move(view.viewport(), kFirstGlyphX + 80, kLine2Y);
+    Up(view.viewport(), kFirstGlyphX + 80, kLine2Y);
     CheckText(view.SelectedText(), lines[0] + L"\r\n" + lines[1] + L"\r\n" + lines[2] + L"\r\n",
               "gutter drag stays line-granular over the text");
 
     // Text drag never turns into a line selection just by crossing the gutter.
-    Down(view.Handle(), kFirstGlyphX, kFirstGlyphY);
-    Move(view.Handle(), kGutterX, kLine2Y);
-    Up(view.Handle(), kGutterX, kLine2Y);
+    Down(view.viewport(), kFirstGlyphX, kFirstGlyphY);
+    Move(view.viewport(), kGutterX, kLine2Y);
+    Up(view.viewport(), kGutterX, kLine2Y);
     {
         const std::wstring selected = view.SelectedText();
         Check(view.HasSelection() && selected.find(L"So we could learn") == 0 &&
@@ -303,9 +247,8 @@ int main() {
               "text drag through the gutter stays character-granular");
     }
 
-    g_lastCommand = 0;
-    DoubleClick(view.Handle(), kGutterX, kLine0Y);
-    Check(g_lastCommand != IDC_BTN_SEND && view.SelectedText() == Joined(lines),
+    DoubleClick(view.viewport(), kGutterX, kLine0Y);
+    Check(view.SelectedText() == Joined(lines),
           "double-click in the gutter selects the transcript tail rather than sending");
 
     // --- Trimming ----------------------------------------------------------
@@ -331,43 +274,35 @@ int main() {
         CheckText(firstLine, L"line 0001", "a trimmed-away anchor moves to the oldest kept line");
         Check(selected.find(L"one more line") != std::wstring::npos,
               "select-all at the end grows across the trim append");
+        QTest::keyClick(&view, Qt::Key_Home);
+        auto* jump = view.findChild<QToolButton*>("jumpToLatest");
+        Check(view.verticalScrollBar()->value() == 0 && jump && jump->isVisible(),
+              "Home reveals the jump-to-latest control");
+        if (jump) jump->click();
+        Check(view.verticalScrollBar()->value() == view.verticalScrollBar()->maximum(),
+              "jump to latest restores the bottom position");
+        QTest::keyClick(&view, Qt::Key_PageUp);
+        Check(view.verticalScrollBar()->value() < view.verticalScrollBar()->maximum(), "Page Up scrolls the transcript");
+        QTest::keyClick(&view, Qt::Key_End);
+        Check(view.verticalScrollBar()->value() == view.verticalScrollBar()->maximum(), "End scrolls to the last caption");
     }
 
     // --- Keyboard ----------------------------------------------------------
     view.QueueUpdate(0, lines);
     view.Present();
 
-    // GetKeyState reads the calling thread's own copy of the keyboard state, and
-    // SetKeyboardState writes it, so the modifier can be held down here without
-    // injecting anything into the rest of the desktop.
-    {
-        BYTE keyboard[256]{};
-        ::GetKeyboardState(keyboard);
-        keyboard[VK_CONTROL] |= 0x80;
-        ::SetKeyboardState(keyboard);
+    int copies = 0;
+    QObject::connect(&view, &CaptionView::copyRequested, [&] { ++copies; });
+    view.ClearSelection();
+    QTest::keyClick(&view, Qt::Key_A, Qt::ControlModifier);
+    CheckText(view.SelectedText(), Joined(lines), "Ctrl+A selects the whole transcript");
+    QTest::keyClick(&view, Qt::Key_C, Qt::ControlModifier);
+    Check(copies == 1, "Ctrl+C asks the parent to copy");
+    QTest::keyClick(&view, Qt::Key_C);
+    Check(copies == 1 && view.HasSelection(), "a bare C neither copies nor deselects");
+    QTest::keyClick(&view, Qt::Key_Escape);
+    Check(!view.HasSelection(), "Escape clears the selection");
 
-        view.ClearSelection();
-        g_lastCommand = 0;
-        ::SendMessageW(view.Handle(), WM_KEYDOWN, 'A', 0);
-        CheckText(view.SelectedText(), Joined(lines), "Ctrl+A selects the whole transcript");
-
-        ::SendMessageW(view.Handle(), WM_KEYDOWN, 'C', 0);
-        Check(g_lastCommand == IDC_BTN_COPY, "Ctrl+C asks the parent to copy");
-
-        keyboard[VK_CONTROL] &= static_cast<BYTE>(~0x80);
-        ::SetKeyboardState(keyboard);
-
-        // Unmodified, the same keys must fall through to scrolling.
-        g_lastCommand = 0;
-        ::SendMessageW(view.Handle(), WM_KEYDOWN, 'C', 0);
-        Check(g_lastCommand == 0 && view.HasSelection(), "a bare C neither copies nor deselects");
-
-        ::SendMessageW(view.Handle(), WM_KEYDOWN, VK_ESCAPE, 0);
-        Check(!view.HasSelection(), "Escape clears the selection");
-    }
-
-    ::DestroyWindow(parent);
-    std::printf("\n%s (%d failure%s)\n", g_failures == 0 ? "All checks passed" : "FAILURES",
-                g_failures, g_failures == 1 ? "" : "s");
+    std::printf("\n%s (%d failures)\n", g_failures == 0 ? "All checks passed" : "FAILURES", g_failures);
     return g_failures == 0 ? 0 : 1;
 }

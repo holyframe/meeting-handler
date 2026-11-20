@@ -10,6 +10,7 @@
 #include <QString>
 #include <QStringList>
 
+class QBoxLayout;
 class QComboBox;
 class QFrame;
 class QGridLayout;
@@ -39,7 +40,7 @@ public:
 signals:
     void statusMessageChanged(const QString& message);
     void logVisibilityChanged(bool visible);
-    void meetingsCollapsedChanged(bool collapsed, int contentHeight);
+    void meetingsCollapsedChanged(bool collapsed);
     void scanRequested();
     void inspectRequested(quintptr hwndValue);
     void pickupRequested();
@@ -89,9 +90,11 @@ private slots:
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     QWidget* createDashboardPage();
+    void arrangeDashboard(int width);
     QWidget* createDiagnosticsPage();
 
     QFrame* createMeetingCard(const ManagedMeeting& meeting);
@@ -99,6 +102,7 @@ private:
     void refreshBatchCard(const QString& previousKey, const ManagedMeeting& meeting);
     void updateMeetingCounts();
     void refreshActionTooltips();
+    void refreshCollapseTitle();
     void layoutMeetingCards();
     void syncMeetingsStrip();
     void removeMeeting(const QString& key);
@@ -135,16 +139,16 @@ private:
     QStringList batchFailures_;
 
     QWidget* dashboardPage_ = nullptr;
+    QBoxLayout* dashboardLayout_ = nullptr;
+    QGridLayout* actionsLayout_ = nullptr;
     QWidget* batchRow_ = nullptr;
     QWidget* collapseBar_ = nullptr;
-    int lastDashboardHeight_ = 0;
     QPushButton* collapseButton_ = nullptr;
     QWidget* logPanel_ = nullptr;
     bool meetingsCollapsed_ = false;
 
     QPushButton* dashboardPickUpButton_ = nullptr;
     QPushButton* dashboardMuteAllButton_ = nullptr;
-    QPushButton* meetingCountButton_ = nullptr;
     QPushButton* dashboardSoundOffButton_ = nullptr;
     QPushButton* uiaRefreshButton_ = nullptr;
     QLabel* batchProgress_ = nullptr;

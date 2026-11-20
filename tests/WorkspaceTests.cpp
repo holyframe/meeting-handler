@@ -1,74 +1,159 @@
 #include "ui/MeetingHandlerWindow.h"
 #include "ui/MeetingControllerPane.h"
 #include "ui/CaptionPane.h"
+#include "ui/CaptionView.h"
+#include "ui/SettingsDialog.h"
 #include "captions/CaptureEngine.h"
-#include "captions/Settings.h"
 #include "resource.h"
 
 #include <QApplication>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDialog>
+#include <QFileDialog>
+#include <QFile>
 #include <QIcon>
+#include <QLineEdit>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QPushButton>
 #include <QSettings>
+#include <QSplitter>
 #include <QTemporaryDir>
-#include <QWidget>
 #include <QTest>
 #include <QTimer>
-
-#include <commctrl.h>
+#include <QToolButton>
 
 namespace {
-QString windowText(HWND window) {
-    wchar_t text[512]{};
-    ::GetWindowTextW(window, text, static_cast<int>(std::size(text)));
-    return QString::fromWCharArray(text);
+QRect boundsIn(QWidget* widget, QWidget* parent) {
+    return {widget->mapTo(parent, QPoint()), widget->size()};
 }
 
-QRect windowBounds(HWND window) {
-    RECT rect{};
-    if (!::GetWindowRect(window, &rect)) return {};
-    return QRect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
-}
-
-void verifyCaptionFits(QWidget* workspace) {
+void verifyColumnsFit(QWidget* workspace) {
+    auto* columns = workspace->findChild<QSplitter*>("workspaceColumns");
+    auto* sidebar = workspace->findChild<QWidget*>("captionSidebar");
     auto* captions = workspace->findChild<CaptionPane*>();
     auto* controller = workspace->findChild<MeetingControllerPane*>();
-    QVERIFY(captions && controller);
-    QVERIFY(!captions->isWindow() && captions->parentWidget() == workspace);
-    QVERIFY(controller->parentWidget() == workspace);
-    const HWND pane = reinterpret_cast<HWND>(captions->winId());
-    const QRect slot = windowBounds(pane);
-    QVERIFY(!slot.isEmpty());
-    QCOMPARE(captions->width(), workspace->contentsRect().width());
-    QCOMPARE(captions->geometry().bottom() + 1, controller->geometry().top());
-    QVERIFY(qAbs(slot.width() - captions->width() * captions->devicePixelRatioF()) <= 1);
-    QVERIFY(qAbs(slot.height() - captions->height() * captions->devicePixelRatioF()) <= 1);
-    const HWND view = ::GetDlgItem(pane, IDC_CAPTION_VIEW);
-    QVERIFY(view && ::GetParent(view) == pane);
-    QCOMPARE(windowBounds(view).right(), slot.right());
-    QCOMPARE(windowBounds(::GetDlgItem(pane, IDC_BOTTOM_PANEL)).bottom(), slot.bottom());
-    const HWND settingsButton = ::GetDlgItem(pane, IDC_BTN_SETTINGS);
-    const HWND logButton = ::GetDlgItem(pane, IDC_BTN_LOG);
-    QVERIFY(settingsButton && logButton);
-    QVERIFY(windowBounds(settingsButton).right() <= windowBounds(logButton).left());
-    QVERIFY(windowBounds(logButton).right() < windowBounds(::GetDlgItem(pane, IDC_CBO_FONT)).left());
-}
-
-HWND dialogOwner = nullptr;
-bool foundSettings = false;
-void CALLBACK dismissCaptionSettings(HWND, UINT, UINT_PTR timer, DWORD) {
-    HWND dialog = ::GetLastActivePopup(dialogOwner);
-    if (!dialog || dialog == dialogOwner || !::GetDlgItem(dialog, IDC_CBO_SOURCE)) return;
-    foundSettings = ::GetWindow(dialog, GW_OWNER) == dialogOwner && ::GetDlgItem(dialog, IDC_EDT_HOTKEY);
-    ::KillTimer(nullptr, timer);
-    ::PostMessageW(dialog, WM_COMMAND, IDCANCEL, 0);
+    QVERIFY(columns && sidebar && captions && controller);
+    QCOMPARE(columns->count(), 3);
+    QCOMPARE(columns->orientation(), Qt::Horizontal);
+    QCOMPARE(columns->widget(0), sidebar);
+    QCOMPARE(columns->widget(1), controller);
+    QCOMPARE(columns->widget(2), captions);
+    QCOMPARE(sidebar->x(), 0);
+    QCOMPARE(sidebar->geometry().right() + 1 + columns->handleWidth(), controller->x());
+    QCOMPARE(controller->geometry().right() + 1 + columns->handleWidth(), captions->x());
+    QCOMPARE(captions->geometry().right() + 1, workspace->width());
+    QCOMPARE(sidebar->height(), columns->height());
+    QCOMPARE(controller->height(), columns->height());
+    QCOMPARE(captions->height(), columns->height());
+    auto* view = captions->findChild<CaptionView*>();
+    auto* toolbar = captions->findChild<QWidget*>("captionToolbar");
+    QVERIFY(view && toolbar);
+    QCOMPARE(boundsIn(view, captions).topLeft(), QPoint());
+    QCOMPARE(boundsIn(view, captions).right(), captions->rect().right());
+    QCOMPARE(boundsIn(toolbar, captions).bottom(), captions->rect().bottom());
+    QList<QRect> controls;
+    for (auto name : {"sendCaption", "pressEnter", "toggleListening", "saveCaptions", "clearCaptions",
+                      "captionPreferences", "toggleActivityLog", "captionFont", "captionSize", "captionSpacing"}) {
+        auto* control = toolbar->findChild<QWidget*>(name);
+        QVERIFY2(control && control->isVisible(), name);
+        const auto rect = boundsIn(control, toolbar);
+        if (!toolbar->rect().contains(rect))
+            qInfo() << name << rect << "toolbar" << toolbar->rect() << "columns" << columns->sizes() << "caption minimum" << captions->minimumWidth();
+        QVERIFY2(toolbar->rect().contains(rect), name);
+        for (const auto& other : controls) QVERIFY2(!rect.intersects(other), name);
+        controls.append(rect);
+    }
 }
 }
 
 class WorkspaceTests : public QObject {
     Q_OBJECT
 private slots:
-    void stackedPanelsShareOneWindow() {
+    void captionDialogSettingsAndSave() {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        Settings settings;
+        settings.transcriptPath = temp.filePath("capture.txt").toStdWString();
+        settings.saveFolder = temp.path().toStdWString();
+        settings.hotkeyVirtualKey = 0;
+        QWidget owner;
+        bool fieldsFound = false;
+        const auto editSettings = [&](bool accept) {
+            QTimer::singleShot(0, &owner, [&, accept] {
+                auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+                if (!dialog) return;
+                auto* source = dialog->findChild<QComboBox*>("captionSource");
+                auto* theme = dialog->findChild<QComboBox*>("captionTheme");
+                auto* hotkey = dialog->findChild<QLineEdit*>("sendHotkey");
+                fieldsFound = source && theme && hotkey;
+                if (fieldsFound) {
+                    source->setCurrentIndex(1);
+                    theme->setCurrentIndex(1);
+                    QTest::keyClick(hotkey, Qt::Key_F8, Qt::ControlModifier | Qt::AltModifier);
+                }
+                if (accept) dialog->accept();
+                else dialog->reject();
+            });
+            return ShowSettingsDialog(&owner, settings);
+        };
+        QVERIFY(!editSettings(false));
+        QVERIFY(fieldsFound);
+        QCOMPARE(settings.theme, UiTheme::Dark);
+        QCOMPARE(settings.hotkeyVirtualKey, 0U);
+        QVERIFY(editSettings(true));
+        QCOMPARE(settings.theme, UiTheme::Light);
+        QCOMPARE(settings.captionSource, CaptionSourcePreference::ChromeLiveCaption);
+        QCOMPARE(settings.hotkeyVirtualKey, unsigned(VK_F8));
+        QCOMPARE(settings.hotkeyModifiers, unsigned(MOD_CONTROL | MOD_ALT));
+        settings.hotkeyVirtualKey = 0;
+
+        QSettings layout(temp.filePath("layout.ini"), QSettings::IniFormat);
+        MeetingHandlerWindow window(settings, layout);
+        QVERIFY(window.captionsReady());
+        window.resize(1200, 640);
+        window.show();
+        verifyColumnsFit(window.centralWidget());
+        auto* captions = window.findChild<CaptionPane*>();
+        QVERIFY(captions);
+        QCOMPARE(captions->findChild<QSplitter*>("captionRows")->sizes().last(), settings.bottomPanelHeight);
+        auto* view = captions->findChild<CaptionView*>();
+        auto* save = captions->findChild<QToolButton*>("saveCaptions");
+        auto* listen = captions->findChild<QToolButton*>("toggleListening");
+        QVERIFY(view && save && listen);
+        listen->click();
+        auto sendUpdate = [&](const wchar_t* text) {
+            QCoreApplication::postEvent(captions, new CaptionUpdate(0, {text}));
+        };
+        sendUpdate(L"First caption");
+        QTRY_VERIFY(!view->Empty());
+        bool qtChooser = false;
+        const QString path = temp.filePath("saved.txt");
+        const auto saveCaptions = [&](bool accept) {
+            QTimer::singleShot(0, &window, [&, accept] {
+                auto* dialog = qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
+                if (!dialog) return;
+                qtChooser = dialog->testOption(QFileDialog::DontUseNativeDialog);
+                if (!accept) { dialog->reject(); return; }
+                dialog->selectFile(path);
+                sendUpdate(L"Final café caption");
+                static_cast<QDialog*>(dialog)->accept();
+            });
+            save->click();
+        };
+        saveCaptions(false);
+        QVERIFY(qtChooser);
+        QCOMPARE(QString::fromStdWString(view->FullText()), QStringLiteral("First caption\r\n"));
+        QVERIFY(!QFile::exists(path));
+        saveCaptions(true);
+        QFile saved(path);
+        QVERIFY(saved.open(QIODevice::ReadOnly));
+        QCOMPARE(saved.readAll(), QByteArray::fromHex("efbbbf") + QStringLiteral("Final café caption\r\n").toUtf8());
+        QVERIFY(view->Empty());
+    }
+
+    void threeColumnsShareOneWindow() {
         QTemporaryDir temp;
         QVERIFY(temp.isValid());
         QSettings layout(temp.filePath("layout.ini"), QSettings::IniFormat);
@@ -76,19 +161,24 @@ private slots:
         settings.transcriptPath = temp.filePath("captions.txt").toStdWString();
         settings.hotkeyVirtualKey = 0;
         settings.sidePanelWidth = 273;
-        HWND native = nullptr;
+        QPointer<CaptionView> formerView;
+        int savedMeetingsWidth = 0;
         {
             MeetingHandlerWindow window(settings, layout);
             QVERIFY(window.captionsReady());
+            window.resize(1200, 640);
             window.show();
+            window.activateWindow();
             QVERIFY(QTest::qWaitForWindowExposed(&window));
             auto* workspace = window.findChild<QWidget*>("workspace");
-            QVERIFY(workspace && window.findChild<QWidget*>("workspaceSplitter") == nullptr);
-            verifyCaptionFits(workspace);
+            QVERIFY(workspace);
+            verifyColumnsFit(workspace);
             QVERIFY(!QIcon(":/icons/meeting-handler.ico").pixmap(16, 16).isNull());
             auto* captions = workspace->findChild<CaptionPane*>();
-            QCOMPARE(captions->grab(QRect(0, 0, 8, 8)).toImage().pixelColor(1, 1),
-                     QColor(32, 32, 32));
+            auto* columns = workspace->findChild<QSplitter*>("workspaceColumns");
+            QCOMPARE(columns->sizes().first(), settings.sidePanelWidth);
+            auto* strip = workspace->findChild<QWidget*>("windowDragStrip");
+            QCOMPARE(strip->grab(QRect(0, 0, 8, 8)).toImage().pixelColor(1, 1), QColor(32, 32, 32));
             auto* controller = workspace->findChild<MeetingControllerPane*>();
             QVERIFY(controller && !controller->isWindow() && !controller->styleSheet().isEmpty());
             auto* log = window.findChild<QPlainTextEdit*>("appLog");
@@ -96,104 +186,143 @@ private slots:
             QVERIFY(log && logPanel && !logPanel->isVisible());
             QCOMPARE(logPanel->parentWidget(), workspace);
             QVERIFY(log->toPlainText().contains("Ready"));
-            auto* collapse = window.findChild<QPushButton*>("collapseMeetingsButton");
-            QVERIFY(collapse && controller->isAncestorOf(collapse));
-            const HWND frame = reinterpret_cast<HWND>(window.winId());
-            native = reinterpret_cast<HWND>(captions->winId());
-            QVERIFY(native && ::GetAncestor(native, GA_ROOT) == frame);
-            QVERIFY((::GetWindowLongPtrW(native, GWL_STYLE) & WS_CHILD) != 0);
+            auto* collapse = controller->findChild<QPushButton*>("collapseMeetingsButton");
+            QVERIFY(collapse);
             QVERIFY(window.windowTitle().contains("No target selected"));
-            const HWND view = ::GetDlgItem(native, IDC_CAPTION_VIEW);
-            const HWND listen = ::GetDlgItem(native, IDC_BTN_LISTEN);
-            QVERIFY(view && listen);
-            ::SendMessageW(listen, BM_CLICK, 0, 0);
-            QCOMPARE(windowText(listen), "Resume caption listening");
-
-            verifyCaptionFits(workspace);
+            auto* view = captions->findChild<CaptionView*>();
+            formerView = view;
+            QCOMPARE(view->viewport()->grab(QRect(0, 0, 8, 8)).toImage().pixelColor(1, 1), QColor(43, 43, 43));
+            auto* listen = captions->findChild<QToolButton*>("toggleListening");
+            auto* toggleLog = captions->findChild<QToolButton*>("toggleActivityLog");
+            auto* send = captions->findChild<QPushButton*>("sendCaption");
+            auto* pressEnter = captions->findChild<QCheckBox*>("pressEnter");
+            QVERIFY(view && listen && toggleLog && send && pressEnter);
+            QCOMPARE(view->window(), &window);
+            listen->click();
+            QCOMPARE(listen->accessibleName(), "Resume caption listening");
 
             QCOMPARE(window.findChildren<QPushButton*>("pageNavButton").size(), 0);
-            QVERIFY(window.findChild<QWidget*>("pageStack") == nullptr);
-            ::SendMessageW(::GetDlgItem(native, IDC_BTN_LOG), BM_CLICK, 0, 0);
+            QVERIFY(!window.findChild<QWidget*>("pageStack"));
+            toggleLog->click();
             QTRY_VERIFY(logPanel->isVisible());
-            QTRY_VERIFY(captions->geometry().bottom() < logPanel->geometry().top()
-                && logPanel->geometry().bottom() < controller->geometry().top());
-            QVERIFY(::IsWindowVisible(view));
-            ::SendMessageW(::GetDlgItem(native, IDC_BTN_LOG), BM_CLICK, 0, 0);
+            QTRY_COMPARE(columns->geometry().bottom() + 1, logPanel->y());
+            QCOMPARE(logPanel->width(), workspace->width());
+            QVERIFY(view->isVisible());
+            toggleLog->click();
             QTRY_VERIFY(!logPanel->isVisible());
-            QTRY_COMPARE(captions->geometry().bottom() + 1, controller->geometry().top());
+            QTRY_COMPARE(columns->geometry().bottom(), workspace->rect().bottom());
 
-            // Exercise the production dispatcher with queued Windows keyboard
-            // messages, without sending global input or contacting a browser.
-            ::SetFocus(view);
-            ::PostMessageW(view, WM_KEYDOWN, VK_TAB, 0);
-            QTRY_VERIFY(::GetFocus() != view && ::IsChild(native, ::GetFocus()));
-            ::SetFocus(::GetDlgItem(native, IDC_BTN_SEND));
-            ::PostMessageW(::GetFocus(), WM_KEYDOWN, VK_TAB, 0);
-            QTRY_COMPARE(::GetFocus(), ::GetDlgItem(native, IDC_CHK_PRESS_ENTER));
-            const HWND first = ::GetNextDlgTabItem(native, nullptr, FALSE);
-            const HWND last = ::GetNextDlgTabItem(native, first, TRUE);
-            QVERIFY(first && last && first != last);
-            ::SetFocus(last);
-            ::PostMessageW(last, WM_KEYDOWN, VK_TAB, 0);
-            QTRY_VERIFY(controller->isAncestorOf(QApplication::focusWidget()));
-            QVERIFY(!::IsChild(native, ::GetFocus()));
-            auto* update = new CaptionUpdate{0, {L"Combined caption test"}};
-            ::SendMessageW(native, WM_APP_CAPTION_UPDATE, 0, reinterpret_cast<LPARAM>(update));
-            ::SendMessageW(view, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(5, 15));
-            ::SendMessageW(view, WM_LBUTTONUP, 0, MAKELPARAM(5, 15));
-            ::SendMessageW(::GetDlgItem(native, IDC_BTN_SEND), BM_CLICK, 0, 0);
+            view->setFocus();
+            QTest::keyClick(view, Qt::Key_Tab);
+            QVERIFY(captions->isAncestorOf(QApplication::focusWidget()) && !view->hasFocus());
+            send->setFocus();
+            QTest::keyClick(send, Qt::Key_Tab);
+            QTRY_COMPARE(QApplication::focusWidget(), pressEnter);
+            auto* spacing = captions->findChild<QComboBox*>("captionSpacing");
+            QVERIFY(spacing);
+            spacing->setFocus();
+            for (int i = 0; i < 5 && !controller->isAncestorOf(QApplication::focusWidget()); ++i)
+                QTest::keyClick(QApplication::focusWidget(), Qt::Key_Tab);
+            QVERIFY(controller->isAncestorOf(QApplication::focusWidget()));
+
+            QCoreApplication::postEvent(captions, new CaptionUpdate(0, {L"We'll review the meeting agenda and then take questions."}));
+            QTRY_COMPARE(QString::fromStdWString(view->FullText()), QStringLiteral("We'll review the meeting agenda and then take questions.\r\n"));
+            QVERIFY(window.grab().save("three-column-workspace.png"));
+            QTest::keyClick(controller, Qt::Key_Return);
+            QVERIFY(!log->toPlainText().contains("Select caption text before sending."));
+            QTest::mouseDClick(view->viewport(), Qt::LeftButton, {}, QPoint(122, 15));
+            QVERIFY(!log->toPlainText().contains("Pick a web tab before sending."));
+            QTest::mouseClick(view->viewport(), Qt::LeftButton, {}, QPoint(5, 15));
+            QTest::keyClick(view, Qt::Key_Return);
             QVERIFY(log->toPlainText().contains("Pick a web tab before sending."));
-            ::PostMessageW(view, WM_KEYDOWN, VK_ESCAPE, 0);
-            ::PostMessageW(native, WM_HOTKEY, HOTKEY_SEND, 0);
+            send->click();
+            QVERIFY(log->toPlainText().contains("Pick a web tab before sending."));
+            QTest::keyClick(view, Qt::Key_Escape);
+            ::PostMessageW(reinterpret_cast<HWND>(window.winId()), WM_HOTKEY, HOTKEY_SEND, 0);
             QTRY_VERIFY(log->toPlainText().contains("Select caption text before sending."));
 
-            const int expandedCaptions = captions->height();
-            const int expandedWindow = window.height();
+            const auto expandedWidths = columns->sizes();
+            const QSize expandedWindow = window.size();
             QTest::mouseClick(collapse, Qt::LeftButton);
             QTRY_VERIFY(controller->meetingsCollapsed());
             QVERIFY(!window.findChild<QWidget*>("pageRoot")->isVisible());
             QVERIFY(collapse->isVisible());
-            QTRY_VERIFY(window.height() < expandedWindow);
-            QTRY_VERIFY(qAbs(captions->height() - expandedCaptions) <= 4);
-            QTRY_COMPARE(captions->geometry().bottom() + 1, controller->geometry().top());
+            QCOMPARE(boundsIn(controller->findChild<QWidget*>("collapseBar"), controller).top(), 0);
+            QTRY_VERIFY(controller->width() < expandedWidths.at(1));
+            QCOMPARE(columns->sizes().first(), expandedWidths.first());
+            QCOMPARE(captions->width(), expandedWidths.last() + expandedWidths.at(1) - controller->width());
+            QCOMPARE(window.size(), expandedWindow);
             QTest::mouseClick(collapse, Qt::LeftButton);
             QTRY_VERIFY(!controller->meetingsCollapsed());
             QVERIFY(window.findChild<QWidget*>("pageRoot")->isVisible());
-            QTRY_COMPARE(window.height(), expandedWindow);
+            QTRY_COMPARE(columns->sizes(), expandedWidths);
+            QCOMPARE(window.size(), expandedWindow);
 
-            dialogOwner = frame;
-            QVERIFY(::SetTimer(nullptr, 0, 25, dismissCaptionSettings) != 0);
-            ::SendMessageW(::GetDlgItem(native, IDC_BTN_SETTINGS), BM_CLICK, 0, 0);
+            auto* preferences = captions->findChild<QToolButton*>("captionPreferences");
+            QVERIFY(preferences);
+            bool foundSettings = false;
+            QTimer::singleShot(0, &window, [&] {
+                auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+                if (!dialog) return;
+                foundSettings = dialog->parentWidget() == &window && dialog->findChild<QComboBox*>("captionSource")
+                    && dialog->findChild<QLineEdit*>("sendHotkey") && dialog->findChild<QLineEdit*>("saveFolder");
+                dialog->reject();
+            });
+            preferences->click();
             QVERIFY(foundSettings);
-            QVERIFY(::IsWindowEnabled(frame));
+            QVERIFY(window.isEnabled());
+
+            window.resize(window.minimumWidth(), window.height());
+            columns->setSizes({950, 324, 100});
+            QCoreApplication::processEvents();
+            verifyColumnsFit(workspace);
+            QVERIFY(boundsIn(spacing, captions).top() > boundsIn(send, captions).bottom());
+
+            window.resize(expandedWindow);
+            const int available = columns->width() - 2 * columns->handleWidth();
+            columns->setSizes({settings.sidePanelWidth, 360, available - settings.sidePanelWidth - 360});
+            auto* handle = columns->handle(2);
+            const QPoint center = handle->rect().center();
+            QTest::mousePress(handle, Qt::LeftButton, {}, center);
+            QTest::mouseMove(handle, center + QPoint(36, 0));
+            QTest::mouseRelease(handle, Qt::LeftButton);
+            QTRY_VERIFY(controller->width() > 360);
+            savedMeetingsWidth = controller->width();
+            collapse->click();
 
             QTimer::singleShot(0, &window, &QWidget::close);
             QCOMPARE(QApplication::exec(), 0);
             QVERIFY(layout.value("splitter").toByteArray().isEmpty());
             QVERIFY(!layout.value("geometry").toByteArray().isEmpty());
+            QVERIFY(layout.value("meetingsCollapsed").toBool());
+            QCOMPARE(layout.value("meetingColumnWidth").toInt(), savedMeetingsWidth);
         }
-        QVERIFY(!::IsWindow(native));
+        QVERIFY(formerView.isNull());
         settings.theme = UiTheme::Light;
         MeetingHandlerWindow reopened(settings, layout);
         QVERIFY(reopened.captionsReady());
         auto* workspace = reopened.findChild<QWidget*>("workspace");
-        QVERIFY(workspace && reopened.findChild<QWidget*>("workspaceSplitter") == nullptr);
+        QVERIFY(workspace);
         reopened.show();
         QVERIFY(QTest::qWaitForWindowExposed(&reopened));
-        verifyCaptionFits(workspace);
-        QCOMPARE(workspace->findChild<CaptionPane*>()->grab(QRect(0, 0, 8, 8)).toImage().pixelColor(1, 1),
+        verifyColumnsFit(workspace);
+        auto* controller = workspace->findChild<MeetingControllerPane*>();
+        QVERIFY(controller->meetingsCollapsed());
+        controller->setMeetingsCollapsed(false);
+        QTRY_COMPARE(controller->width(), savedMeetingsWidth);
+        QCOMPARE(workspace->findChild<QWidget*>("windowDragStrip")->grab(QRect(0, 0, 8, 8)).toImage().pixelColor(1, 1),
+                 QColor(Qt::white));
+        QCOMPARE(workspace->findChild<CaptionView*>()->viewport()->grab(QRect(0, 0, 8, 8)).toImage().pixelColor(1, 1),
                  QColor(Qt::white));
         reopened.showMaximized();
         QTRY_VERIFY(reopened.isMaximized());
         QCoreApplication::processEvents();
-        verifyCaptionFits(workspace);
+        verifyColumnsFit(workspace);
     }
 };
 
 int main(int argc, char** argv) {
     if (FAILED(::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED))) return 1;
-    INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_WIN95_CLASSES | ICC_STANDARD_CLASSES | ICC_BAR_CLASSES};
-    ::InitCommonControlsEx(&controls);
     int result;
     {
         QApplication app(argc, argv);

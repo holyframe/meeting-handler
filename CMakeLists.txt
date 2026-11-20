@@ -19,6 +19,7 @@ endif()
 add_library(meeting_handler_core STATIC
     src/ui/MeetingHandlerWindow.cpp
     src/ui/CaptionPane.cpp
+    src/ui/CaptionTheme.cpp
     src/ui/CaptionTargetList.cpp
     src/ui/CaptionView.cpp
     src/ui/MeetingControllerPane.cpp
@@ -46,16 +47,15 @@ set_target_properties(meeting_handler_core PROPERTIES AUTOMOC ON)
 target_include_directories(meeting_handler_core PUBLIC src resources)
 target_link_libraries(meeting_handler_core
     PUBLIC Qt6::Widgets
-    PRIVATE advapi32 comctl32 comdlg32 d2d1 dwmapi dwrite gdi32 ole32 oleaut32
-            shell32 shlwapi uiautomationcore user32 uxtheme uuid
+    PRIVATE advapi32 dwmapi ole32 oleaut32 uiautomationcore user32 uuid
 )
 qt_add_resources(meeting_handler_core application_assets
     PREFIX "/"
     BASE resources
-    FILES resources/icons/meeting-handler.ico resources/controller.qss
+    FILES resources/icons/meeting-handler.ico resources/controller.qss resources/captions.qss
 )
 
-# The shared-window test embeds the same Win32 settings dialog and DPI manifest.
+# The shared-window test uses the packaged app's Windows DPI manifest.
 set(app_resources "${CMAKE_CURRENT_BINARY_DIR}/resources")
 file(MAKE_DIRECTORY "${app_resources}")
 configure_file(resources/app.manifest.in "${app_resources}/app.manifest" @ONLY)
@@ -90,6 +90,8 @@ if(BUILD_TESTING)
         target_link_libraries(${suite} PRIVATE meeting_handler_core)
         add_test(NAME caption.${suite} COMMAND ${suite})
     endforeach()
+    target_link_libraries(selection_test PRIVATE Qt6::Test)
+    target_link_libraries(picker_async_test PRIVATE Qt6::Test)
     add_test(NAME caption.merge_latency COMMAND merge_test --latency
         CONFIGURATIONS Release RelWithDebInfo MinSizeRel)
 

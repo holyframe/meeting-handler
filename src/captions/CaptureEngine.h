@@ -1,6 +1,7 @@
 #pragma once
 
 #include <windows.h>
+#include <QEvent>
 
 #include <atomic>
 #include <string>
@@ -11,10 +12,18 @@
 #include "CaptionSource.h"
 #include "TranscriptStore.h"
 
-// Payload for WM_APP_CAPTION_UPDATE. The receiving window takes ownership.
-struct CaptionUpdate {
-    size_t                    firstDirtyLine = 0;
-    std::vector<std::wstring> lines;  // replaces everything from firstDirtyLine on
+// Posted from the capture thread. Qt owns the payload until the UI consumes it.
+struct CaptionUpdate final : QEvent {
+    static QEvent::Type eventType();
+    CaptionUpdate(size_t first, std::vector<std::wstring> replacement);
+    size_t firstDirtyLine;
+    std::vector<std::wstring> lines;
+};
+
+struct CaptionStatus final : QEvent {
+    static QEvent::Type eventType();
+    explicit CaptionStatus(const std::wstring& message);
+    std::wstring text;
 };
 
 // Owns the background polling thread that scrapes the caption window, merges
@@ -30,9 +39,8 @@ public:
     CaptureEngine(const CaptureEngine&) = delete;
     CaptureEngine& operator=(const CaptureEngine&) = delete;
 
-    // `notifyWindow` receives WM_APP_CAPTION_UPDATE / WM_APP_STATUS /
-    // WM_APP_SOURCE_CHANGED.
-    bool Start(HWND notifyWindow, const std::wstring& transcriptPath, int pollIntervalMs,
+    // Stop joins the producer before its receiver can be destroyed.
+    bool Start(QObject* receiver, const std::wstring& transcriptPath, int pollIntervalMs,
                CaptionSourceChoice sourceChoice);
     void Stop();
     void SetPaused(bool paused);
@@ -65,7 +73,7 @@ private:
     HANDLE             m_stopEvent = nullptr;
     HANDLE             m_changeEvent = nullptr;
     HANDLE             m_controlEvent = nullptr;
-    HWND               m_notifyWindow = nullptr;
+    QObject*           m_receiver = nullptr;
     std::atomic<bool>  m_running{false};
     std::atomic<bool>  m_paused{false};
     std::atomic<HWND>  m_sourceWindow{nullptr};

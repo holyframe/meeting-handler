@@ -1,227 +1,169 @@
 #include "SettingsDialog.h"
+#include "CaptionTheme.h"
 
-#include <commctrl.h>
-#include <dwmapi.h>
-#include <shobjidl.h>
-#include <uxtheme.h>
-#include <wrl/client.h>
+#include <windows.h>
+#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFileDialog>
+#include <QFormLayout>
+#include <QGuiApplication>
+#include <QHBoxLayout>
+#include <QKeyEvent>
+#include <QLabel>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QStyleHints>
+#include <QVBoxLayout>
 
-#include <algorithm>
-#include <string>
+QString captionHotkeyName(unsigned modifiers, unsigned key) {
+    std::wstring name;
+    auto append = [&name](const wchar_t* part) {
+        if (!name.empty()) name += L"+";
+        name += part;
+    };
 
-#include "resource.h"
+    if (modifiers & MOD_CONTROL) append(L"Ctrl");
+    if (modifiers & MOD_ALT) append(L"Alt");
+    if (modifiers & MOD_SHIFT) append(L"Shift");
+    if (modifiers & MOD_WIN) append(L"Win");
+
+    if (key >= 'A' && key <= 'Z') {
+        const wchar_t keyName[] = {static_cast<wchar_t>(key), L'\0'};
+        append(keyName);
+    } else if (key >= '0' && key <= '9') {
+        const wchar_t keyName[] = {static_cast<wchar_t>(key), L'\0'};
+        append(keyName);
+    } else if (key != 0) {
+        wchar_t keyName[64]{};
+        UINT scanCode = ::MapVirtualKeyW(key, MAPVK_VK_TO_VSC);
+        switch (key) {
+            case VK_INSERT:
+            case VK_DELETE:
+            case VK_HOME:
+            case VK_END:
+            case VK_PRIOR:
+            case VK_NEXT:
+            case VK_LEFT:
+            case VK_RIGHT:
+            case VK_UP:
+            case VK_DOWN:
+            case VK_DIVIDE:
+            case VK_NUMLOCK:
+                scanCode |= 0x100;
+                break;
+        }
+        if (::GetKeyNameTextW(static_cast<LONG>(scanCode << 16), keyName,
+                              static_cast<int>(std::size(keyName))) > 0) {
+            append(keyName);
+        } else {
+            append(L"Unknown");
+        }
+    }
+
+    return name.empty() ? QStringLiteral("None") : QString::fromStdWString(name);
+}
 
 namespace {
+// Store the Windows virtual key from the Qt event so existing INI shortcuts, including
+// layout-dependent punctuation and extended keys, can round-trip through RegisterHotKey.
+class HotkeyEdit final : public QLineEdit {
+public:
+    HotkeyEdit(const Settings& settings, QWidget* parent)
+        : QLineEdit(parent), modifiers(settings.hotkeyModifiers), key(settings.hotkeyVirtualKey) {
+        setObjectName("sendHotkey");
+        setReadOnly(true);
+        setText(captionHotkeyName(modifiers, key));
+    }
+    unsigned modifiers;
+    unsigned key;
 
-constexpr COLORREF kDarkBackground = RGB(32, 32, 32);
-constexpr COLORREF kDarkText = RGB(235, 235, 235);
-
-struct DialogState {
-    Settings value;
-    HBRUSH darkBrush = nullptr;
+protected:
+    void keyPressEvent(QKeyEvent* event) override {
+        switch (event->key()) {
+        case Qt::Key_Shift: case Qt::Key_Control: case Qt::Key_Alt: case Qt::Key_Meta:
+        case Qt::Key_AltGr: return;
+        default: break;
+        }
+        unsigned vk = event->nativeVirtualKey();
+        if (!vk && event->key() >= Qt::Key_0 && event->key() <= Qt::Key_Z)
+            vk = static_cast<unsigned>(event->key());
+        if (!vk && event->key() >= Qt::Key_F1 && event->key() <= Qt::Key_F24)
+            vk = VK_F1 + event->key() - Qt::Key_F1;
+        if (!vk || vk > 255) return QLineEdit::keyPressEvent(event);
+        const auto mods = event->modifiers();
+        modifiers = (mods.testFlag(Qt::ShiftModifier) ? MOD_SHIFT : 0) |
+                    (mods.testFlag(Qt::ControlModifier) ? MOD_CONTROL : 0) |
+                    (mods.testFlag(Qt::AltModifier) ? MOD_ALT : 0) |
+                    (mods.testFlag(Qt::MetaModifier) ? MOD_WIN : 0);
+        key = vk;
+        setText(captionHotkeyName(modifiers, key));
+        event->accept();
+    }
 };
-
-bool SystemUsesDarkTheme() {
-    DWORD value = 1;
-    DWORD bytes = sizeof(value);
-    return ::RegGetValueW(HKEY_CURRENT_USER,
-                          L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-                          L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr, &value, &bytes) ==
-               ERROR_SUCCESS &&
-           value == 0;
 }
 
-bool IsDark(UiTheme theme) {
-    return theme == UiTheme::Dark || (theme == UiTheme::System && SystemUsesDarkTheme());
-}
+bool ShowSettingsDialog(QWidget* owner, Settings& settings) {
+    QDialog dialog(owner);
+    dialog.setObjectName("captionSettings");
+    dialog.setWindowTitle(QObject::tr("Settings"));
+    auto* form = new QFormLayout(&dialog);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    auto* source = new QComboBox(&dialog);
+    source->setObjectName("captionSource");
+    source->addItems({QObject::tr("Windows 11 Live Captions"), QObject::tr("Chrome Live Caption")});
+    source->setCurrentIndex(settings.captionSource == CaptionSourcePreference::ChromeLiveCaption ? 1 : 0);
+    form->addRow(QObject::tr("Caption source"), source);
+    form->addRow(QString(), new QLabel(QObject::tr("Choose which live-caption window this app reads.")));
+    auto* theme = new QComboBox(&dialog);
+    theme->setObjectName("captionTheme");
+    theme->addItems({QObject::tr("Dark"), QObject::tr("Light"), QObject::tr("System")});
+    theme->setCurrentIndex(static_cast<int>(settings.theme));
+    form->addRow(QObject::tr("Theme"), theme);
+    const auto applyTheme = [&] { caption_theme::apply(&dialog, static_cast<UiTheme>(theme->currentIndex())); };
+    QObject::connect(theme, &QComboBox::currentIndexChanged, &dialog, applyTheme);
+    QObject::connect(qGuiApp->styleHints(), &QStyleHints::colorSchemeChanged, &dialog, applyTheme);
+    applyTheme();
 
-std::wstring DialogText(HWND dialog, int controlId) {
-    const HWND control = ::GetDlgItem(dialog, controlId);
-    const int length = control ? ::GetWindowTextLengthW(control) : 0;
-    if (length <= 0) return {};
+    auto* hotkey = new HotkeyEdit(settings, &dialog);
+    hotkey->setAccessibleName(QObject::tr("Send hotkey"));
+    auto* change = new QPushButton(QObject::tr("Change..."), &dialog);
+    QObject::connect(change, &QPushButton::clicked, hotkey, [hotkey] { hotkey->setFocus(); });
+    auto* hotkeyRow = new QHBoxLayout;
+    hotkeyRow->addWidget(hotkey, 1);
+    hotkeyRow->addWidget(change);
+    form->addRow(QObject::tr("Hotkey"), hotkeyRow);
 
-    std::wstring text(static_cast<size_t>(length) + 1, L'\0');
-    const int copied = ::GetWindowTextW(control, text.data(), length + 1);
-    text.resize(static_cast<size_t>(std::max(copied, 0)));
-    return text;
-}
-
-bool PickSaveFolder(HWND owner, const std::wstring& initialFolder, std::wstring& selectedFolder) {
-    using Microsoft::WRL::ComPtr;
-
-    ComPtr<IFileOpenDialog> picker;
-    if (FAILED(::CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
-                                  IID_PPV_ARGS(&picker))) ||
-        !picker) {
-        return false;
-    }
-
-    DWORD options = 0;
-    picker->GetOptions(&options);
-    picker->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
-    picker->SetTitle(L"Choose caption save folder");
-
-    if (!initialFolder.empty()) {
-        ComPtr<IShellItem> initial;
-        if (SUCCEEDED(::SHCreateItemFromParsingName(initialFolder.c_str(), nullptr,
-                                                    IID_PPV_ARGS(&initial))) &&
-            initial) {
-            picker->SetFolder(initial.Get());
-        }
-    }
-
-    if (picker->Show(owner) != S_OK) return false;
-
-    ComPtr<IShellItem> result;
-    if (FAILED(picker->GetResult(&result)) || !result) return false;
-
-    PWSTR path = nullptr;
-    if (FAILED(result->GetDisplayName(SIGDN_FILESYSPATH, &path)) || !path) return false;
-    selectedFolder = path;
-    ::CoTaskMemFree(path);
-    return !selectedFolder.empty();
-}
-
-WORD ToHotkeyControlValue(unsigned modifiers, unsigned key) {
-    BYTE flags = 0;
-    if (modifiers & MOD_CONTROL) flags |= HOTKEYF_CONTROL;
-    if (modifiers & MOD_ALT) flags |= HOTKEYF_ALT;
-    if (modifiers & MOD_SHIFT) flags |= HOTKEYF_SHIFT;
-    return MAKEWORD(static_cast<BYTE>(key), flags);
-}
-
-void ApplyDialogTheme(HWND dialog, DialogState* state) {
-    const bool dark = state && IsDark(state->value.theme);
-    const BOOL darkTitle = dark ? TRUE : FALSE;
-    ::DwmSetWindowAttribute(dialog, 20 /*DWMWA_USE_IMMERSIVE_DARK_MODE*/, &darkTitle,
-                            sizeof(darkTitle));
-    const wchar_t* explorer = dark ? L"DarkMode_Explorer" : L"Explorer";
-    const wchar_t* field = dark ? L"DarkMode_CFD" : L"CFD";
-    const int explorerIds[] = {IDC_BTN_HOTKEY_CHANGE, IDC_BTN_SAVE_FOLDER, IDOK, IDCANCEL};
-    for (int id : explorerIds) ::SetWindowTheme(::GetDlgItem(dialog, id), explorer, nullptr);
-    const int fieldIds[] = {IDC_CBO_SOURCE, IDC_CBO_THEME, IDC_EDT_HOTKEY,
-                            IDC_EDT_SAVE_FOLDER};
-    for (int id : fieldIds) ::SetWindowTheme(::GetDlgItem(dialog, id), field, nullptr);
-    ::InvalidateRect(dialog, nullptr, TRUE);
-}
-
-INT_PTR CALLBACK DialogProc(HWND dialog, UINT message, WPARAM wParam, LPARAM lParam) {
-    auto* state = reinterpret_cast<DialogState*>(::GetWindowLongPtrW(dialog, DWLP_USER));
-    switch (message) {
-        case WM_INITDIALOG: {
-            state = reinterpret_cast<DialogState*>(lParam);
-            ::SetWindowLongPtrW(dialog, DWLP_USER, reinterpret_cast<LONG_PTR>(state));
-            state->darkBrush = ::CreateSolidBrush(kDarkBackground);
-
-            HWND source = ::GetDlgItem(dialog, IDC_CBO_SOURCE);
-            ::SendMessageW(source, CB_ADDSTRING, 0,
-                           reinterpret_cast<LPARAM>(L"Windows 11 Live Captions"));
-            ::SendMessageW(source, CB_ADDSTRING, 0,
-                           reinterpret_cast<LPARAM>(L"Chrome Live Caption"));
-            ::SendMessageW(source, CB_SETCURSEL,
-                           state->value.captionSource ==
-                                   CaptionSourcePreference::ChromeLiveCaption
-                               ? 1
-                               : 0,
-                           0);
-
-            HWND theme = ::GetDlgItem(dialog, IDC_CBO_THEME);
-            ::SendMessageW(theme, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Dark"));
-            ::SendMessageW(theme, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Light"));
-            ::SendMessageW(theme, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"System"));
-            ::SendMessageW(theme, CB_SETCURSEL, static_cast<WPARAM>(state->value.theme), 0);
-            ::SendDlgItemMessageW(
-                dialog, IDC_EDT_HOTKEY, HKM_SETHOTKEY,
-                ToHotkeyControlValue(state->value.hotkeyModifiers,
-                                     state->value.hotkeyVirtualKey),
-                0);
-            ::SetDlgItemTextW(dialog, IDC_EDT_SAVE_FOLDER,
-                              state->value.ResolvedSaveFolder().c_str());
-            ApplyDialogTheme(dialog, state);
-            return TRUE;
-        }
-
-        case WM_COMMAND:
-            if (LOWORD(wParam) == IDC_BTN_HOTKEY_CHANGE && HIWORD(wParam) == BN_CLICKED) {
-                ::SetFocus(::GetDlgItem(dialog, IDC_EDT_HOTKEY));
-                return TRUE;
-            }
-            if (LOWORD(wParam) == IDC_BTN_SAVE_FOLDER && HIWORD(wParam) == BN_CLICKED) {
-                std::wstring folder;
-                if (PickSaveFolder(dialog, DialogText(dialog, IDC_EDT_SAVE_FOLDER), folder)) {
-                    ::SetDlgItemTextW(dialog, IDC_EDT_SAVE_FOLDER, folder.c_str());
-                }
-                return TRUE;
-            }
-            if (LOWORD(wParam) == IDC_CBO_THEME && HIWORD(wParam) == CBN_SELCHANGE) {
-                const LRESULT selected =
-                    ::SendDlgItemMessageW(dialog, IDC_CBO_THEME, CB_GETCURSEL, 0, 0);
-                if (selected != CB_ERR) state->value.theme = static_cast<UiTheme>(selected);
-                ApplyDialogTheme(dialog, state);
-                return TRUE;
-            }
-            if (LOWORD(wParam) == IDOK) {
-                const LRESULT source =
-                    ::SendDlgItemMessageW(dialog, IDC_CBO_SOURCE, CB_GETCURSEL, 0, 0);
-                const LRESULT theme =
-                    ::SendDlgItemMessageW(dialog, IDC_CBO_THEME, CB_GETCURSEL, 0, 0);
-                state->value.captionSource =
-                    source == 1 ? CaptionSourcePreference::ChromeLiveCaption
-                                : CaptionSourcePreference::WindowsLiveCaptions;
-                if (theme != CB_ERR) state->value.theme = static_cast<UiTheme>(theme);
-                state->value.saveFolder = DialogText(dialog, IDC_EDT_SAVE_FOLDER);
-                const WORD hotkey = static_cast<WORD>(
-                    ::SendDlgItemMessageW(dialog, IDC_EDT_HOTKEY, HKM_GETHOTKEY, 0, 0));
-                const BYTE key = LOBYTE(hotkey);
-                const BYTE flags = HIBYTE(hotkey);
-                if (key != 0) {
-                    unsigned modifiers = 0;
-                    if (flags & HOTKEYF_CONTROL) modifiers |= MOD_CONTROL;
-                    if (flags & HOTKEYF_ALT) modifiers |= MOD_ALT;
-                    if (flags & HOTKEYF_SHIFT) modifiers |= MOD_SHIFT;
-                    state->value.hotkeyModifiers = modifiers;
-                    state->value.hotkeyVirtualKey = key;
-                }
-                ::EndDialog(dialog, IDOK);
-                return TRUE;
-            }
-            if (LOWORD(wParam) == IDCANCEL) {
-                ::EndDialog(dialog, IDCANCEL);
-                return TRUE;
-            }
-            break;
-
-        case WM_CTLCOLORDLG:
-        case WM_CTLCOLORSTATIC:
-        case WM_CTLCOLOREDIT:
-            if (state && IsDark(state->value.theme)) {
-                HDC dc = reinterpret_cast<HDC>(wParam);
-                ::SetTextColor(dc, kDarkText);
-                ::SetBkColor(dc, kDarkBackground);
-                ::SetBkMode(dc, TRANSPARENT);
-                return reinterpret_cast<INT_PTR>(state->darkBrush);
-            }
-            break;
-
-        case WM_DESTROY:
-            if (state && state->darkBrush) {
-                ::DeleteObject(state->darkBrush);
-                state->darkBrush = nullptr;
-            }
-            break;
-    }
-    return FALSE;
-}
-
-}  // namespace
-
-bool ShowSettingsDialog(HWND owner, HINSTANCE instance, Settings& settings) {
-    DialogState state;
-    state.value = settings;
-    const INT_PTR result =
-        ::DialogBoxParamW(instance, MAKEINTRESOURCEW(IDD_SETTINGS), owner, DialogProc,
-                          reinterpret_cast<LPARAM>(&state));
-    if (result != IDOK) return false;
-    settings = state.value;
+    auto* folder = new QLineEdit(QString::fromStdWString(settings.ResolvedSaveFolder()), &dialog);
+    folder->setObjectName("saveFolder");
+    folder->setAccessibleName(QObject::tr("Save folder"));
+    auto* browse = new QPushButton(QObject::tr("Browse..."), &dialog);
+    QObject::connect(browse, &QPushButton::clicked, &dialog, [&] {
+        QFileDialog chooser(&dialog);
+        chooser.setOption(QFileDialog::DontUseNativeDialog);
+        chooser.setFileMode(QFileDialog::Directory);
+        chooser.setOption(QFileDialog::ShowDirsOnly);
+        chooser.setWindowTitle(QObject::tr("Choose caption save folder"));
+        chooser.setDirectory(folder->text());
+        caption_theme::apply(&chooser, static_cast<UiTheme>(theme->currentIndex()));
+        if (chooser.exec() == QDialog::Accepted && !chooser.selectedFiles().isEmpty())
+            folder->setText(chooser.selectedFiles().first());
+    });
+    auto* folderRow = new QHBoxLayout;
+    folderRow->addWidget(folder, 1);
+    folderRow->addWidget(browse);
+    form->addRow(QObject::tr("Save folder"), folderRow);
+    form->addRow(QString(), new QLabel(QObject::tr("Save creates a timestamped file named after the picked tab.")));
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    form->addRow(buttons);
+    if (dialog.exec() != QDialog::Accepted) return false;
+    settings.captionSource = source->currentIndex() == 1 ? CaptionSourcePreference::ChromeLiveCaption
+                                                        : CaptionSourcePreference::WindowsLiveCaptions;
+    settings.theme = static_cast<UiTheme>(theme->currentIndex());
+    settings.saveFolder = folder->text().toStdWString();
+    settings.hotkeyModifiers = hotkey->modifiers;
+    settings.hotkeyVirtualKey = hotkey->key;
     return true;
 }
