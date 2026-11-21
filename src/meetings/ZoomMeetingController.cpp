@@ -236,7 +236,6 @@ QString audioActionName(zoomAudio::Action action)
     switch (action)
     {
     case zoomAudio::Action::OpenMenu: return "open audio menu";
-    case zoomAudio::Action::JoinAudio: return "open join-audio chooser";
     case zoomAudio::Action::JoinComputerAudio: return "join computer audio";
     case zoomAudio::Action::SelectComputerAudio: return "select Computer Audio tab";
     case zoomAudio::Action::LeaveAudio: return "leave computer audio";
@@ -659,8 +658,7 @@ QJsonObject ZoomMeetingController::controlAudioConnection(
     const QString selectedId = activation.value("tabRuntimeId").toString();
     QString contextError;
     bool targetLost = false;
-    // Discover an already-open chooser before clicking Join Audio; that
-    // toolbar button can otherwise just reopen/toggle the same dialog.
+    // Sound On also looks for the join button in already-open Zoom popups.
     bool searchPopups = connected.value_or(false);
     bool openedMenu = false;
     QString menuRuntimeId;
@@ -725,23 +723,16 @@ QJsonObject ZoomMeetingController::controlAudioConnection(
         };
         if (searchPopups && windowRoot)
             appendFragment(windowRoot.Get());
-        if (connected.value_or(false))
+        // Chrome can expose the join button in its renderer before either the
+        // toolbar or the chooser is present in the window's accessibility tree.
+        if (connected.value_or(false) && std::none_of(controls.cbegin(), controls.cend(), [](const Control& control) {
+                return zoomAudio::actionForName(control.name) == zoomAudio::Action::JoinComputerAudio;
+            }))
         {
-            bool chooserExpected = false;
-            bool joinFound = false;
-            for (const Control& control : controls)
-            {
-                const auto action = zoomAudio::actionForName(control.name);
-                chooserExpected |= control.computerAudioPanel || action == zoomAudio::Action::SelectComputerAudio
-                    || action == zoomAudio::Action::JoinAudio;
-                joinFound |= action == zoomAudio::Action::JoinComputerAudio;
-            }
-            if (chooserExpected && !joinFound)
-            {
-                const auto fragment = foregroundFragment(automation_.Get(), hwnd, document.Get());
-                if (fragment && !sameElement(automation_.Get(), fragment.Get(), windowRoot.Get()))
-                    appendFragment(fragment.Get());
-            }
+            const auto fragment = foregroundFragment(automation_.Get(), hwnd, document.Get());
+            if (fragment && !sameElement(automation_.Get(), fragment.Get(), document.Get())
+                && !sameElement(automation_.Get(), fragment.Get(), windowRoot.Get()))
+                appendFragment(fragment.Get());
         }
         if (controls.empty())
             document.Reset();
@@ -817,17 +808,11 @@ QJsonObject ZoomMeetingController::controlAudioConnection(
             report("Preparing to " + audioActionName(action));
             const auto controls = readControls();
             const auto observation = observeControls(controls);
-            if (action == zoomAudio::Action::JoinAudio && observation.chooserOpen())
-            {
-                report("The chooser appeared before the toolbar action. Using the open chooser.");
-                return true;
-            }
             // State may have changed since the previous read. Never activate a
             // connection control on contradictory or newly unknown evidence.
             if ((action == zoomAudio::Action::LeaveAudio
                  && observation.connection != zoomAudio::Connection::Connected)
-                || ((action == zoomAudio::Action::JoinAudio
-                     || action == zoomAudio::Action::JoinComputerAudio)
+                || (action == zoomAudio::Action::JoinComputerAudio
                     && observation.connection != zoomAudio::Connection::Disconnected))
                 return false;
 
@@ -967,14 +952,17 @@ QJsonObject ZoomMeetingController::controlAudioConnection(
         }
     }
 
-    const bool ok = outcome.ok && targetInWindow() && contextError.isEmpty();
-    report(ok ? "Audio state verified" : "Audio state unverified");
+    // A missing join button can prevent Sound On while the toolbar still confirms Sound off.
+    const bool verified = outcome.observation.connection != zoomAudio::Connection::Unknown
+        && (outcome.ok || !outcome.actionAttempted) && targetInWindow() && contextError.isEmpty();
+    const bool ok = outcome.ok && verified;
+    report(verified ? "Audio state verified" : "Audio state unverified");
     QJsonObject result{
-        {"ok", ok}, {"verified", ok}, {"changed", ok && outcome.changed},
+        {"ok", ok}, {"verified", verified}, {"changed", ok && outcome.changed},
         {"stateChangeAttempted", outcome.actionAttempted},
-        {"audioState", ok ? zoomAudio::connectionName(outcome.observation.connection) : "unknown"},
+        {"audioState", verified ? zoomAudio::connectionName(outcome.observation.connection) : "unknown"},
         {"audioControlName", outcome.observation.controlName},
-        {"state", ok ? outcome.observation.microphoneState : "unknown"},
+        {"state", verified ? outcome.observation.microphoneState : "unknown"},
         {"controlName", outcome.observation.microphoneControlName},
         {"tabRuntimeId", selectedId}, {"audioDiagnostics", diagnostics}
     };

@@ -66,17 +66,13 @@ struct FakeAudio
     QList<Action> actions;
     int frame = 0;
     bool canInvoke = true;
-    bool chooserRequiresToolbar = false;
 
     zoomAudio::Backend backend()
     {
         return {
             [this] { return zoomAudio::observe(frames.at(qMin(frame, frames.size() - 1))); },
             [this](Action action) { actions.append(action); return canInvoke; },
-            [this] {
-                if (frame > 0 || !chooserRequiresToolbar || actions.contains(Action::JoinAudio))
-                    ++frame;
-            }
+            [this] { ++frame; }
         };
     }
 };
@@ -128,7 +124,7 @@ private slots:
         row("live mic", "Mute", Action::None, Connection::Unknown);
         row("shortcut", "Unmute (Alt+A)", Action::None, Connection::Unknown);
         row("my mic", "Mute my microphone", Action::None, Connection::Unknown);
-        row("join", "Join Audio", Action::JoinAudio, Connection::Disconnected);
+        row("join", "Join Audio", Action::None, Connection::Disconnected);
         row("computer join", "Join with Computer Audio", Action::JoinComputerAudio, Connection::Disconnected);
         row("alternate join", "Join Audio by Computer", Action::JoinComputerAudio, Connection::Disconnected);
         row("join button with loading text", "Join Audio by Computer loading", Action::JoinComputerAudio, Connection::Disconnected);
@@ -138,7 +134,7 @@ private slots:
         row("menu", "Audio options", Action::OpenMenu, Connection::Unknown);
         row("menu with mute", "More mute controls", Action::OpenMenu, Connection::Unknown);
         row("live chooser button", "Join Audio by Computer", Action::JoinComputerAudio, Connection::Disconnected);
-        row("live toolbar join", "join audio", Action::JoinAudio, Connection::Disconnected);
+        row("toolbar with options hint", "Connect Audio (more options)", Action::None, Connection::Disconnected);
         row("computer audio tab", "Computer Audio", Action::SelectComputerAudio, Connection::Unknown);
         row("participants", "Mute All", Action::None, Connection::Unknown);
         row("unmute participants", "Unmute All", Action::None, Connection::Unknown);
@@ -200,17 +196,37 @@ private slots:
         QCOMPARE(result.observation.microphoneState, "audioNotConnected");
     }
 
-    void joinsThroughChooserAndVerifies()
+    void soundOnReportsMissingJoinButton_data()
     {
-        FakeAudio fake{{{"Join Audio"}, {"Join Audio", "Join with Computer Audio"}, {},
-                        {"Unmute", "Leave Computer Audio"}}};
-        fake.chooserRequiresToolbar = true;
-        const auto result = zoomAudio::setConnected(fake.backend(), true, 6);
-        QVERIFY(result.ok);
-        QVERIFY(result.changed);
-        QCOMPARE(fake.actions, QList<Action>({Action::JoinAudio, Action::JoinComputerAudio}));
-        QCOMPARE(result.observation.connection, Connection::Connected);
-        QCOMPARE(result.observation.microphoneState, "muted");
+        QTest::addColumn<QStringList>("controls");
+        QTest::addColumn<bool>("panelVisible");
+        QTest::newRow("toolbar only") << QStringList{"Join Audio"} << false;
+        QTest::newRow("chooser and toolbar") << QStringList{"Join Audio", "Phone Call", "Computer Audio"} << false;
+        QTest::newRow("chooser tab only") << QStringList{"Phone Call", "Computer Audio"} << false;
+        QTest::newRow("chooser panel only") << QStringList{} << true;
+    }
+
+    void soundOnReportsMissingJoinButton()
+    {
+        QFETCH(QStringList, controls);
+        QFETCH(bool, panelVisible);
+        FakeAudio fake{{controls, {"Join Audio by Computer"}, {"Leave Computer Audio"}}};
+        auto backend = fake.backend();
+        backend.read = [read = backend.read, panelVisible] {
+            auto state = read();
+            state.computerAudioPanelVisible = panelVisible;
+            return state;
+        };
+        const auto result = zoomAudio::setConnected(backend, true, 50);
+        QVERIFY(!result.ok);
+        QVERIFY(result.error.contains("Could not find the Join Audio by Computer button"));
+        QVERIFY(!result.actionAttempted);
+        QVERIFY(!result.changed);
+        QVERIFY(fake.actions.isEmpty());
+        QCOMPARE(fake.frame, 0);
+        const bool verifiedOff = controls.contains("Join Audio");
+        QCOMPARE(result.observation.connection, verifiedOff ? Connection::Disconnected : Connection::Unknown);
+        QCOMPARE(result.observation.microphoneState, verifiedOff ? "audioNotConnected" : "unknown");
     }
 
     void joinsDirectlyWhenChooserAlreadyOpen()
@@ -219,6 +235,25 @@ private slots:
         const auto result = zoomAudio::setConnected(fake.backend(), true, 3);
         QVERIFY(result.ok);
         QCOMPARE(fake.actions, QList<Action>({Action::JoinComputerAudio}));
+        QCOMPARE(result.observation.microphoneState, "unmuted");
+    }
+
+    void soundOnFindsJoinButtonBeforeAnyChooserMarker()
+    {
+        FakeAudio fake{{{}, {"Join Audio By Computer"}, {"Join Audio"}, {"Unmute", "Leave Computer Audio"}}};
+        const auto result = zoomAudio::setConnected(fake.backend(), true, 8);
+        QVERIFY(result.ok);
+        QCOMPARE(result.observation.connection, Connection::Connected);
+        QCOMPARE(fake.actions, QList<Action>{Action::JoinComputerAudio});
+    }
+
+    void soundOnPrefersJoinButtonWhenToolbarAndComputerTabAreAlsoVisible()
+    {
+        FakeAudio fake{{{"Join Audio", "Computer Audio", "Join Audio by Computer", "More audio controls"},
+                        {"Join Audio by Computer"}, {"Mute", "Leave Computer Audio"}}};
+        const auto result = zoomAudio::setConnected(fake.backend(), true, 8);
+        QVERIFY(result.ok);
+        QCOMPARE(fake.actions, QList<Action>{Action::JoinComputerAudio});
         QCOMPARE(result.observation.microphoneState, "unmuted");
     }
 
@@ -231,33 +266,7 @@ private slots:
         QVERIFY(observation.joinComputerAvailable);
     }
 
-    void selectsComputerPanelBeforeJoining()
-    {
-        FakeAudio fake{{{"join audio"},
-                        {"join audio", "Phone Call", "Computer Audio"},
-                        {"join audio", "Computer Audio", "Join Audio by Computer"},
-                        {"unmute my microphone", "More audio controls"},
-                        {"unmute my microphone", "More audio controls", "Leave Computer Audio"}}};
-        fake.chooserRequiresToolbar = true;
-        const auto result = zoomAudio::setConnected(fake.backend(), true, 10);
-        QVERIFY(result.ok);
-        QVERIFY(result.changed);
-        QCOMPARE(result.observation.microphoneState, "muted");
-        QCOMPARE(fake.actions, QList<Action>({Action::JoinAudio, Action::SelectComputerAudio,
-                                              Action::JoinComputerAudio, Action::OpenMenu}));
-    }
-
-    void existingChooserNeverClicksToolbarJoinAgain()
-    {
-        FakeAudio fake{{{"join audio", "Phone Call", "Computer Audio"},
-                        {"join audio", "Computer Audio", "Join Audio by Computer"},
-                        {"unmute my microphone", "Leave Computer Audio"}}};
-        const auto result = zoomAudio::setConnected(fake.backend(), true, 10);
-        QVERIFY(result.ok);
-        QCOMPARE(fake.actions, QList<Action>({Action::SelectComputerAudio, Action::JoinComputerAudio}));
-    }
-
-    void soundOffOpensChooserBeforeSoundOn()
+    void soundOnCanRetryAfterTheJoinButtonAppears()
     {
         FakeAudio fake{{{"unmute my microphone", "More audio controls"},
                         {"unmute my microphone", "More audio controls", "Leave computer audio"},
@@ -269,27 +278,18 @@ private slots:
         const auto off = zoomAudio::setConnected(backend, false, 8);
         QVERIFY(off.ok);
         QCOMPARE(off.observation.connection, Connection::Disconnected);
+        const auto missing = zoomAudio::setConnected(backend, true, 8);
+        QVERIFY(!missing.ok);
+        QVERIFY(!missing.actionAttempted);
+        QCOMPARE(fake.actions, QList<Action>({Action::OpenMenu, Action::LeaveAudio}));
+
+        ++fake.frame; // The user opens Zoom's chooser before retrying Sound On.
         const auto on = zoomAudio::setConnected(backend, true, 8);
         QVERIFY(on.ok);
         QVERIFY(on.changed);
         QCOMPARE(on.observation.microphoneState, "muted");
         QCOMPARE(fake.actions, QList<Action>({Action::OpenMenu, Action::LeaveAudio,
                                               Action::JoinComputerAudio, Action::OpenMenu}));
-    }
-
-    void waitsForJoinButtonInsideVisibleComputerPanel()
-    {
-        FakeAudio fake{{{"Join Audio"}, {"Join Audio", "Computer Audio"}, {"Join Audio"}, {"Join Audio"},
-                        {"Join Audio", "Join Audio by Computer"}, {"Unmute", "Leave Computer Audio"}}};
-        auto backend = fake.backend();
-        backend.read = [&] {
-            auto state = zoomAudio::observe(fake.frames.at(fake.frame));
-            state.computerAudioPanelVisible = fake.frame < 2;
-            return state;
-        };
-        const auto on = zoomAudio::setConnected(backend, true, 8);
-        QVERIFY(on.ok);
-        QCOMPARE(fake.actions, QList<Action>({Action::JoinComputerAudio}));
     }
 
     void soundOnAfterManualRejoinOnlyRefreshesCardState()
@@ -305,9 +305,9 @@ private slots:
         QCOMPARE(fake.actions, QList<Action>({Action::OpenMenu}));
     }
 
-    void manualRejoinDuringChooserDiscoveryIsVerified()
+    void manualRejoinWhileZoomControlsLoadIsVerified()
     {
-        FakeAudio fake{{{"Join Audio"}, {"unmute my microphone", "More audio controls"},
+        FakeAudio fake{{{}, {"unmute my microphone", "More audio controls"},
                         {"unmute my microphone", "More audio controls", "Leave computer audio"}}};
         const auto on = zoomAudio::setConnected(fake.backend(), true, 8);
         QVERIFY(on.ok);
@@ -348,51 +348,57 @@ private slots:
         QCOMPARE(fake.actions, QList<Action>({Action::SelectComputerAudio}));
     }
 
-    void delayedJoinButtonIsInvokedOnce()
+    void soundOnReportsMissingButtonIfZoomExposesNoControls()
     {
-        FakeAudio fake{{{"join audio"}}};
-        fake.chooserRequiresToolbar = true;
-        for (int index = 0; index < 18; ++index)
-            fake.frames.append(QStringList{"join audio", "Computer Audio"});
-        fake.frames.append(QStringList{"join audio", "Computer Audio", "Join Audio by Computer"});
-        fake.frames.append(QStringList{"unmute my microphone", "Leave Computer Audio"});
+        FakeAudio fake{{{}}};
         const auto result = zoomAudio::setConnected(fake.backend(), true, 50);
-        QVERIFY(result.ok);
-        QCOMPARE(fake.actions, QList<Action>({Action::JoinAudio, Action::SelectComputerAudio,
-                                              Action::JoinComputerAudio}));
+        QVERIFY(!result.ok);
+        QVERIFY(result.error.contains("Could not find the Join Audio by Computer button"));
+        QCOMPARE(result.observation.connection, Connection::Unknown);
+        QVERIFY(!result.actionAttempted);
+        QVERIFY(fake.actions.isEmpty());
+        QVERIFY(fake.frame < 50);
     }
 
     void failedJoinDoesNotKeepClicking()
     {
-        FakeAudio fake{{{"Join Audio"}, {"Join Audio", "Join with Computer Audio"}}};
-        fake.chooserRequiresToolbar = true;
+        FakeAudio fake{{{"Join Audio", "Join with Computer Audio"}}};
         const auto result = zoomAudio::setConnected(fake.backend(), true, 5);
         QVERIFY(!result.ok);
         QVERIFY(result.actionAttempted);
         QVERIFY(!result.changed);
-        QCOMPARE(fake.actions, QList<Action>({Action::JoinAudio, Action::JoinComputerAudio}));
+        QCOMPARE(fake.actions, QList<Action>{Action::JoinComputerAudio});
         QVERIFY(result.error.contains("unverified"));
+    }
+
+    void disappearingJoinButtonNeedsConnectionConfirmation()
+    {
+        FakeAudio fake{{{"Join Audio by Computer"}, {"Unmute"}}};
+        const auto result = zoomAudio::setConnected(fake.backend(), true, 3);
+        QVERIFY(!result.ok);
+        QVERIFY(result.actionAttempted);
+        QCOMPARE(fake.actions, QList<Action>{Action::JoinComputerAudio});
+        QVERIFY(result.error.contains("unverified"));
+        QVERIFY(result.error.contains("clicked"));
     }
 
     void joiningMustVerifyComputerAudioThroughMenu()
     {
-        FakeAudio fake{{{"Join Audio"}, {"Unmute", "Audio options"},
+        FakeAudio fake{{{"Join Audio by Computer"}, {"Unmute", "Audio options"},
                         {"Unmute", "Audio options", "Leave Computer Audio"}}};
-        fake.chooserRequiresToolbar = true;
         const auto result = zoomAudio::setConnected(fake.backend(), true, 5);
         QVERIFY(result.ok);
-        QCOMPARE(fake.actions, QList<Action>({Action::JoinAudio, Action::OpenMenu}));
+        QCOMPARE(fake.actions, QList<Action>({Action::JoinComputerAudio, Action::OpenMenu}));
         QCOMPARE(result.observation.controlName, "Leave Computer Audio");
     }
 
     void microphoneAloneCannotVerifySoundOn()
     {
-        FakeAudio fake{{{"Join Audio"}, {"Unmute"}}};
-        fake.chooserRequiresToolbar = true;
+        FakeAudio fake{{{"Join Audio by Computer"}, {"Unmute"}}};
         const auto result = zoomAudio::setConnected(fake.backend(), true, 3);
         QVERIFY(!result.ok);
         QVERIFY(!result.changed);
-        QCOMPARE(fake.actions, QList<Action>({Action::JoinAudio}));
+        QCOMPARE(fake.actions, QList<Action>{Action::JoinComputerAudio});
     }
 
     void conflictingMicrophonesRemainUnread()
@@ -431,7 +437,7 @@ private slots:
 
     void unavailableActionIsReportedUnverified()
     {
-        FakeAudio fake{{{"Join Audio"}}};
+        FakeAudio fake{{{"Join Audio by Computer"}}};
         fake.canInvoke = false;
         const auto result = zoomAudio::setConnected(fake.backend(), true, 3);
         QVERIFY(!result.ok);
@@ -546,6 +552,39 @@ private slots:
         QCOMPARE(window.meetingCountValue_->text(), QString("1/1"));
         QCOMPARE(window.meetingCards_.first()->findChild<QPushButton*>("soundButton")->text(), "Sound On");
         QCOMPARE(window.meetingCards_.first()->findChild<QLabel*>("soundState")->text(), "Sound off");
+    }
+
+    void missingJoinButtonShowsErrorAndKeepsVerifiedSoundOff()
+    {
+        FakeAudio fake{{{"Join Audio"}}};
+        const auto result = zoomAudio::setConnected(fake.backend(), true);
+        QVERIFY(!result.ok);
+        MeetingControllerPane window;
+        populate(window, ManagedMeeting::Sound::Off, ManagedMeeting::Microphone::AudioNotConnected);
+        window.meetingCards_.first()->findChild<QPushButton*>("soundButton")->click();
+        QVERIFY(window.meetingBusy_);
+
+        QString warning;
+        QTimer::singleShot(0, &window, [&] {
+            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget()))
+            {
+                warning = box->text();
+                box->accept();
+            }
+        });
+        window.onAudioConnectionSet({
+            {"requestKey", window.meetings_.first().key()}, {"requestedConnected", true},
+            {"ok", result.ok}, {"verified", true}, {"error", result.error},
+            {"audioState", zoomAudio::connectionName(result.observation.connection)},
+            {"state", result.observation.microphoneState}
+        });
+        QCOMPARE(warning, result.error);
+        QVERIFY(warning.contains("Join Audio by Computer"));
+        QCOMPARE(window.meetings_.first().sound, ManagedMeeting::Sound::Off);
+        QCOMPARE(window.meetings_.first().microphone, ManagedMeeting::Microphone::AudioNotConnected);
+        auto* button = window.meetingCards_.first()->findChild<QPushButton*>("soundButton");
+        QCOMPARE(button->text(), "Sound On");
+        QVERIFY(button->isEnabled());
     }
 
     void unverifiedSoundResultClearsCachedStates()
@@ -837,9 +876,11 @@ private slots:
             return QRect(widget->mapTo(&window, QPoint()), widget->size());
         };
         QTRY_VERIFY(bounds(window.dashboardPickUpButton_).bottom() < bounds(window.meetingsArea_).top());
-        QCOMPARE(bounds(window.dashboardMuteAllButton_).top(), bounds(window.uiaRefreshButton_).top());
-        QCOMPARE(bounds(window.dashboardSoundOffButton_).top(), bounds(window.dashboardPickUpButton_).top());
-        QVERIFY(bounds(window.dashboardMuteAllButton_).bottom() < bounds(window.dashboardSoundOffButton_).top());
+        QCOMPARE(bounds(window.dashboardMuteAllButton_).top(), bounds(window.dashboardSoundOffButton_).top());
+        QVERIFY(bounds(window.dashboardMuteAllButton_).bottom() < bounds(window.dashboardPickUpButton_).top());
+        QVERIFY(bounds(window.uiaRefreshButton_).bottom() <= bounds(window.dashboardMuteAllButton_).top());
+        QVERIFY(bounds(window.uiaRefreshButton_).left() > bounds(window.collapseButton_).left());
+        QCOMPARE(bounds(window.uiaRefreshButton_).width(), bounds(window.uiaRefreshButton_).height());
         for (auto* button : {window.dashboardMuteAllButton_, window.uiaRefreshButton_,
                              window.dashboardSoundOffButton_, window.dashboardPickUpButton_}) {
             for (auto* label : button->findChildren<QLabel*>()) {
@@ -917,15 +958,18 @@ private slots:
         const QPoint soundOff = origin(window.dashboardSoundOffButton_);
         const QPoint connection = origin(window.uiaRefreshButton_);
         const QPoint pickup = origin(window.dashboardPickUpButton_);
-        QVERIFY(mute.y() < connection.y());
-        QVERIFY(connection.y() < soundOff.y());
+        QVERIFY(connection.y() < mute.y());
+        QVERIFY(connection.x() > origin(window.collapseButton_).x());
+        QVERIFY(mute.y() < soundOff.y());
         QVERIFY(soundOff.y() < pickup.y());
         QVERIFY(qAbs(mute.x() - pickup.x()) <= 2);
         QVERIFY(mute.x() < window.meetingsArea_->mapTo(&window, QPoint()).x());
         QCOMPARE(window.dashboardMuteAllButton_->findChild<QLabel*>("railCaption")->text(), QString("Mute all"));
         QVERIFY(window.findChild<QPushButton*>("railCountButton") == nullptr);
         QCOMPARE(window.dashboardSoundOffButton_->findChild<QLabel*>("railCaption")->text(), QString("Sound off all"));
-        QCOMPARE(window.uiaRefreshButton_->findChild<QLabel*>("railCaption")->text(), QString("Connection"));
+        QCOMPARE(window.uiaRefreshButton_->accessibleName(), QString("Connection status"));
+        QCOMPARE(window.uiaRefreshButton_->width(), window.uiaRefreshButton_->height());
+        QVERIFY(window.uiaRefreshButton_->findChild<QLabel*>("railIcon") == nullptr);
         QCOMPARE(window.dashboardPickUpButton_->findChild<QLabel*>("railCaption")->text(), QString("Pick up tabs"));
         QCOMPARE(window.meetingCountValue_->text(), QString("2/3"));
         QVERIFY(window.collapseButton_->text().contains(QStringLiteral("Meetings (2/3)")));

@@ -112,14 +112,14 @@ MeetingControllerPane::MeetingControllerPane(QWidget* parent)
     collapseBar_->setFixedHeight(36);
     auto* barLayout = new QHBoxLayout(collapseBar_);
     barLayout->setContentsMargins(8, 4, 8, 4);
-    barLayout->setSpacing(0);
+    barLayout->setSpacing(6);
     collapseButton_ = new QPushButton(collapseBar_);
     collapseButton_->setObjectName("collapseMeetingsButton");
     collapseButton_->setCursor(Qt::PointingHandCursor);
     collapseButton_->setAccessibleName("Collapse meetings");
     collapseButton_->setToolTip("Hide the meeting controls");
     collapseButton_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    barLayout->addWidget(collapseButton_);
+    barLayout->addWidget(collapseButton_, 1);
 
     dashboardPage_ = createDashboardPage();
     refreshCollapseTitle();
@@ -274,11 +274,17 @@ QWidget* MeetingControllerPane::createDashboardPage()
     dashboardSoundOffButton_ = makeRailButton(rail, QChar(0xE74F), "railSoundButton", "Sound off all", nullptr);
     dashboardSoundOffButton_->setEnabled(false);
 
-    uiaRefreshButton_ = makeRailButton(
-        rail, QChar(0xE703), "railConnectionButton", "Connection", nullptr);
+    uiaRefreshButton_ = new QPushButton(collapseBar_);
+    uiaRefreshButton_->setObjectName("railConnectionButton");
+    uiaRefreshButton_->setCursor(Qt::PointingHandCursor);
+    uiaRefreshButton_->setFocusPolicy(Qt::StrongFocus);
     uiaRefreshButton_->setAccessibleName("Connection status");
     uiaRefreshButton_->setProperty("connection", "idle");
     uiaRefreshButton_->setEnabled(false);
+    uiaRefreshButton_->setFixedSize(10, 10);
+    uiaRefreshButton_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    if (auto* barLayout = qobject_cast<QHBoxLayout*>(collapseBar_->layout()))
+        barLayout->addWidget(uiaRefreshButton_, 0, Qt::AlignVCenter);
     uiaValue_ = railText("Idle", "railValue", uiaRefreshButton_);
     uiaValue_->hide();
     uiaDetail_ = railText("Starts on first inspection", "railDetail", uiaRefreshButton_);
@@ -393,7 +399,7 @@ void MeetingControllerPane::arrangeDashboard(int width)
                         compact ? QSizePolicy::Fixed : QSizePolicy::Expanding);
     const int columns = compact ? 2 : 1;
     int index = 0;
-    for (auto* button : {dashboardMuteAllButton_, uiaRefreshButton_, dashboardSoundOffButton_, dashboardPickUpButton_})
+    for (auto* button : {dashboardMuteAllButton_, dashboardSoundOffButton_, dashboardPickUpButton_})
     {
         actionsLayout_->removeWidget(button);
         actionsLayout_->addWidget(button, index / columns, index % columns);
@@ -1217,6 +1223,10 @@ void MeetingControllerPane::refreshCollapseTitle()
         return;
     auto* barLayout = qobject_cast<QHBoxLayout*>(collapseBar_->layout());
     collapseButton_->setProperty("collapsed", meetingsCollapsed_);
+    if (uiaRefreshButton_)
+        uiaRefreshButton_->setVisible(!meetingsCollapsed_);
+    if (barLayout)
+        barLayout->activate();
     if (meetingsCollapsed_)
     {
         collapseButton_->setText(QStringLiteral("\u25B6"));
@@ -1683,30 +1693,31 @@ void MeetingControllerPane::applyAudioResult(const QJsonObject& result, const QS
 {
     ManagedMeeting* meeting = findMeeting(result.value("requestKey").toString());
     const QString audioState = result.value("audioState").toString();
-    const bool verified = result.value("ok").toBool() && result.value("verified").toBool()
+    const bool verified = result.value("verified").toBool()
         && (audioState == "connected" || audioState == "disconnected");
+    const QString sound = audioState == "connected" ? "on" : "off";
     QJsonObject observation = result;
     observation.insert("ok", verified);
     if (meeting)
         meeting->applyObservation(observation);
 
-    if (!verified)
+    if (!result.value("ok").toBool() || !verified)
     {
         const QString error = result.value("error").toString("Zoom's sound state could not be verified.");
         const QString title = meeting ? meeting->title : QString("Meeting");
         appendLog(QString("\"%1\", %2 failed: %3").arg(title, action, error));
-        setMeetingBusy(false, action + " failed · sound state unread");
+        const QString status = verified ? "Sound " + sound : QString("sound state unread");
+        setMeetingBusy(false, action + " failed · " + status);
         QMessageBox::warning(this, action + " failed", error);
         return;
     }
 
     const QString title = meeting ? meeting->title : QString("meeting");
     appendLog(QString("\"%1\" sound is %2 (verified from \"%3\"); microphone is %4.")
-                  .arg(title, audioState == "connected" ? "on" : "off",
-                       result.value("audioControlName").toString(), result.value("state").toString()));
+                  .arg(title, sound, result.value("audioControlName").toString(), result.value("state").toString()));
     setMeetingBusy(false,
         QString("%1 · Sound %2 · microphone state refreshed")
-            .arg(title, audioState == "connected" ? "on" : "off"));
+            .arg(title, sound));
 }
 
 void MeetingControllerPane::onAudioConnectionRead(const QJsonObject& result)

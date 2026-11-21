@@ -72,7 +72,6 @@ QFrame#controllerRail {
 QPushButton#railMuteButton,
 QPushButton#railCountButton,
 QPushButton#railSoundButton,
-QPushButton#railConnectionButton,
 QPushButton#railPickupButton {
     font-family: "Segoe UI";
     font-size: 9pt;
@@ -114,8 +113,7 @@ QPushButton#railMuteButton QLabel#railCaption {
 }
 QPushButton#railMuteButton:hover:enabled { background: #4A3C3C; }
 QPushButton#railCountButton,
-QPushButton#railSoundButton,
-QPushButton#railConnectionButton {
+QPushButton#railSoundButton {
     color: #E4E4E4;
     background: #333333;
     border: 1px solid #4E4E4E;
@@ -124,29 +122,11 @@ QPushButton#railCountButton QLabel#railIcon,
 QPushButton#railCountButton QLabel#railCaption,
 QPushButton#railCountButton QLabel#railValue,
 QPushButton#railSoundButton QLabel#railIcon,
-QPushButton#railSoundButton QLabel#railCaption,
-QPushButton#railConnectionButton QLabel#railIcon,
-QPushButton#railConnectionButton QLabel#railCaption,
-QPushButton#railConnectionButton QLabel#railValue {
+QPushButton#railSoundButton QLabel#railCaption {
     color: #E4E4E4;
 }
 QPushButton#railCountButton:hover:enabled,
-QPushButton#railSoundButton:hover:enabled,
-QPushButton#railConnectionButton:hover:enabled { background: #404040; }
-QPushButton#railConnectionButton[connection="ready"] {
-    border-color: #166534;
-}
-QPushButton#railConnectionButton[connection="ready"] QLabel#railIcon,
-QPushButton#railConnectionButton[connection="ready"] QLabel#railValue {
-    color: #B7D7C0;
-}
-QPushButton#railConnectionButton[connection="unavailable"] {
-    border-color: #8A5555;
-}
-QPushButton#railConnectionButton[connection="unavailable"] QLabel#railIcon,
-QPushButton#railConnectionButton[connection="unavailable"] QLabel#railValue {
-    color: #E7B8B8;
-}
+QPushButton#railSoundButton:hover:enabled { background: #404040; }
 QPushButton#railPickupButton {
     color: white;
     background: #454545;
@@ -159,7 +139,6 @@ QPushButton#railPickupButton QLabel#railCaption {
 QPushButton#railPickupButton:hover:enabled { background: #525252; }
 QPushButton#railMuteButton:disabled,
 QPushButton#railSoundButton:disabled,
-QPushButton#railConnectionButton:disabled,
 QPushButton#railPickupButton:disabled {
     color: #8A8A8A;
     background: #2E2E2E;
@@ -169,8 +148,6 @@ QPushButton#railMuteButton:disabled QLabel#railIcon,
 QPushButton#railMuteButton:disabled QLabel#railCaption,
 QPushButton#railSoundButton:disabled QLabel#railIcon,
 QPushButton#railSoundButton:disabled QLabel#railCaption,
-QPushButton#railConnectionButton:disabled QLabel#railIcon,
-QPushButton#railConnectionButton:disabled QLabel#railCaption,
 QPushButton#railPickupButton:disabled QLabel#railIcon,
 QPushButton#railPickupButton:disabled QLabel#railCaption {
     color: #8A8A8A;
@@ -467,4 +444,22 @@ QCheckBox::indicator {
 QCheckBox::indicator:checked {
     background: #454545;
     border-color: #6A6A6A;
+}
+QPushButton#railConnectionButton,
+QPushButton#railConnectionButton:hover,
+QPushButton#railConnectionButton:disabled {
+    background: #8A8A8A;
+    border: none;
+    padding: 0;
+    border-radius: 5px;
+    min-width: 10px;
+    max-width: 10px;
+    min-height: 10px;
+    max-height: 10px;
+}
+QPushButton#railConnectionButton[connection="ready"],
+QPushButton#railConnectionButton[connection="ready"]:hover,
+QPushButton#railConnectionButton[connection="ready"]:disabled {
+    background: #22C55E;
+    border: none;
 }

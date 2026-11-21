@@ -2,9 +2,16 @@
 
 namespace
 {
+constexpr int kJoinButtonSettleReads = 2;
+
 bool namesAction(const QString& text, const QString& action)
 {
     return text == action || text.startsWith(action + " (");
+}
+
+bool isToolbarJoin(const QString& text)
+{
+    return namesAction(text, "join audio") || namesAction(text, "connect audio");
 }
 
 // Zoom's join button is <button>Join Audio by Computer<span class="loading">.
@@ -39,7 +46,7 @@ static bool canVerifyThroughMenu(const Observation& state)
     // after a manual or automated join. Only the Leave item confirms audio.
     const bool microphoneReturned = state.microphoneState == "muted" || state.microphoneState == "unmuted";
     return state.menuAvailable && (!state.chooserOpen()
-        || (microphoneReturned && !state.joinAvailable && !state.joinComputerAvailable));
+        || (microphoneReturned && !state.toolbarJoinVisible && !state.joinComputerAvailable));
 }
 
 Action actionForName(const QString& name)
@@ -61,8 +68,8 @@ Action actionForName(const QString& name)
         if (namesAction(text, action))
             return Action::LeaveAudio;
     }
-    if (namesAction(text, "join audio") || namesAction(text, "connect audio"))
-        return Action::JoinAudio;
+    if (isToolbarJoin(text))
+        return Action::None;
 
     if ((text.contains("audio") || text.contains("mute"))
         && (text.contains("option") || text.contains("menu")
@@ -85,10 +92,6 @@ Observation observe(const QStringList& visibleControlNames)
     {
         switch (actionForName(name))
         {
-        case Action::JoinAudio:
-            result.joinAvailable = true;
-            disconnectedControl = name;
-            break;
         case Action::JoinComputerAudio:
             result.joinComputerAvailable = true;
             disconnectedControl = name;
@@ -105,7 +108,14 @@ Observation observe(const QStringList& visibleControlNames)
             break;
         default:
         {
-            const QString state = microphoneState(name.simplified().toLower());
+            const QString text = name.simplified().toLower();
+            if (isToolbarJoin(text))
+            {
+                result.toolbarJoinVisible = true;
+                disconnectedControl = name;
+                break;
+            }
+            const QString state = microphoneState(text);
             if (!state.isEmpty())
             {
                 microphoneConflict = microphoneConflict
@@ -157,7 +167,7 @@ QString connectionName(Connection connection)
     }
 }
 
-Result readConnection(const Backend& backend, int attempts)
+static Result discoverConnection(const Backend& backend, int attempts, bool forSoundOn)
 {
     Result result;
     bool menuOpened = false;
@@ -181,7 +191,7 @@ Result readConnection(const Backend& backend, int attempts)
                 break;
             menuOpened = true;
         }
-        else if (!menuOpened && !tabSelected && state.computerAudioTabAvailable
+        else if (!forSoundOn && !menuOpened && !tabSelected && state.computerAudioTabAvailable
                  && !state.computerAudioTabSelected && !state.computerAudioPanelVisible
                  && !state.joinComputerAvailable)
         {
@@ -189,24 +199,43 @@ Result readConnection(const Backend& backend, int attempts)
                 break;
             tabSelected = true;
         }
-        else if (!waitingForChooser && !menuOpened)
-            break;
+        else if (!menuOpened)
+        {
+            // A newly activated tab can briefly expose no controls. Sound On
+            // can re-read it, but a visible chooser is ready for the button check.
+            const bool waitForControls = forSoundOn
+                ? !waitingForChooser && attempt < kJoinButtonSettleReads
+                : waitingForChooser;
+            if (!waitForControls)
+                break;
+        }
         backend.wait();
     }
-    result.error = "Could not find the Join Audio or Leave Computer Audio button. "
-                   "The sound state was not changed.";
+    result.error = forSoundOn ? "Zoom's computer-audio state could not be verified."
+        : "Could not find the Join Audio or Leave Computer Audio button. The sound state was not changed.";
     return result;
 }
 
-static Result joinComputerAudio(const Backend& backend, Result result, int attempts)
+Result readConnection(const Backend& backend, int attempts)
 {
-    // Zoom can open the chooser as soon as Sound Off finishes. Its toolbar
-    // can update before its panel becomes accessible.
-    constexpr int chooserSettleReads = 2;
-    bool chooserSeen = false;
-    bool toolbarInvoked = false;
-    bool tabSelected = false;
-    bool joinInvoked = false;
+    return discoverConnection(backend, attempts, false);
+}
+
+static Result joinComputerAudio(const Backend& backend, int attempts)
+{
+    Result result = discoverConnection(backend, attempts, true);
+    if (result.observation.connection == Connection::Connected)
+        return result;
+    if (!result.observation.joinComputerAvailable && !result.observation.leaveAvailable)
+    {
+        result.ok = false;
+        result.error = "Could not find the Join Audio by Computer button in Zoom. "
+                       "Open Zoom's audio chooser, select Computer Audio, and try again.";
+        return result;
+    }
+    if (!result.ok)
+        return result;
+
     bool verificationMenuOpened = false;
     result.ok = false;
 
@@ -222,91 +251,55 @@ static Result joinComputerAudio(const Backend& backend, Result result, int attem
         if (attempt >= attempts)
             break;
 
-        chooserSeen = chooserSeen || state.chooserOpen();
-        Action action = Action::None;
-        if (!joinInvoked && state.joinComputerAvailable && state.connection == Connection::Disconnected)
+        if (!result.actionAttempted)
         {
-            action = Action::JoinComputerAudio;
-            joinInvoked = true;
-        }
-        else if (!verificationMenuOpened && state.connection == Connection::Unknown
-                 && canVerifyThroughMenu(state))
-        {
-            action = Action::OpenMenu;
-            verificationMenuOpened = true;
-        }
-        else if (!joinInvoked && !tabSelected && state.computerAudioTabAvailable
-                 && !state.computerAudioTabSelected && !state.computerAudioPanelVisible)
-        {
-            action = Action::SelectComputerAudio;
-            tabSelected = true;
-        }
-        else if (!chooserSeen && !toolbarInvoked && state.joinAvailable
-                 && state.connection == Connection::Disconnected
-                 && attempt >= qMin(chooserSettleReads, attempts - 1))
-        {
-            action = Action::JoinAudio;
-            toolbarInvoked = true;
-        }
-
-        if (action != Action::None)
-        {
-            if (action == Action::JoinComputerAudio || action == Action::JoinAudio)
-                result.actionAttempted = true;
-            if (!backend.invoke(action))
+            result.actionAttempted = true;
+            if (!backend.invoke(Action::JoinComputerAudio))
             {
-                // A manual join or a Zoom re-render can remove the control
-                // between discovery and activation. Verify before reporting
-                // a failure or attributing a change to this request.
-                if (action != Action::OpenMenu)
+                // The user may have joined between discovery and activation.
+                Result current = discoverConnection(backend, attempts - attempt, true);
+                if (current.ok && current.observation.connection == Connection::Connected)
                 {
-                    Result current = readConnection(backend, attempts - attempt);
-                    if (current.ok && current.observation.connection == Connection::Connected)
-                    {
-                        current.actionAttempted = result.actionAttempted;
-                        return current;
-                    }
+                    current.actionAttempted = true;
+                    return current;
                 }
-                result.error = action == Action::SelectComputerAudio
-                    ? "Could not select the Computer Audio tab. The meeting was not joined."
-                    : action == Action::JoinComputerAudio
-                    ? "The Join Audio by Computer button was found, but it could not be clicked. "
-                      "The connection is unverified and the meeting was not joined."
-                    : action == Action::JoinAudio
-                    ? "The Join Audio button was found, but it could not be clicked. "
-                      "The connection is unverified and the meeting was not joined."
-                    : "Zoom's audio control could not be activated. The connection is unverified.";
+                result.error = "The Join Audio by Computer button was found, but it could not be clicked. "
+                               "The connection is unverified and the meeting was not joined.";
                 return result;
             }
+        }
+        else if (!verificationMenuOpened && state.connection == Connection::Unknown && canVerifyThroughMenu(state))
+        {
+            if (!backend.invoke(Action::OpenMenu))
+            {
+                result.error = "Zoom's audio control could not be activated. The connection is unverified.";
+                return result;
+            }
+            verificationMenuOpened = true;
         }
         backend.wait();
         result.observation = backend.read();
     }
 
-    if (result.observation.joinComputerAvailable && joinInvoked)
+    if (result.observation.joinComputerAvailable && result.actionAttempted)
         result.error = "The Join Audio by Computer button was clicked, but Zoom still shows it. "
                        "The connection is unverified and the meeting was not marked as joined.";
-    else if (!joinInvoked && toolbarInvoked)
-        result.error = "Could not find the Join Audio by Computer button. "
-                       "The Join Audio button was clicked, but that button did not appear. "
-                       "The meeting was not joined.";
-    else if (!joinInvoked && chooserSeen)
-        result.error = "Could not find the Join Audio by Computer button in the audio chooser. "
-                       "The meeting was not joined.";
+    else if (result.actionAttempted)
+        result.error = "Join Audio by Computer was clicked, but Zoom did not confirm the connection. "
+                       "The sound state is unverified.";
     else
-        result.error = "Could not find the Join Audio button. The meeting was not joined.";
+        result.error = "Zoom's computer-audio connection could not be verified.";
     return result;
 }
 
 Result setConnected(const Backend& backend, bool connected, int attempts)
 {
-    Result result = readConnection(backend, attempts);
-    const Connection wanted = connected ? Connection::Connected : Connection::Disconnected;
-    if (!result.ok || result.observation.connection == wanted)
-        return result;
     if (connected)
-        return joinComputerAudio(backend, result, attempts);
+        return joinComputerAudio(backend, attempts);
 
+    Result result = readConnection(backend, attempts);
+    if (!result.ok || result.observation.connection == Connection::Disconnected)
+        return result;
     result.ok = false;
     if (!result.observation.leaveAvailable)
     {
@@ -316,7 +309,7 @@ Result setConnected(const Backend& backend, bool connected, int attempts)
             {
                 backend.wait();
                 result.observation = backend.read();
-                if (result.observation.connection == wanted)
+                if (result.observation.connection == Connection::Disconnected)
                 {
                     result.ok = true;
                     return result;
@@ -346,7 +339,7 @@ Result setConnected(const Backend& backend, bool connected, int attempts)
     {
         backend.wait();
         result.observation = backend.read();
-        if (result.observation.connection == wanted)
+        if (result.observation.connection == Connection::Disconnected)
         {
             result.ok = true;
             result.changed = true;

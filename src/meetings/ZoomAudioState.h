@@ -9,7 +9,7 @@
 namespace zoomAudio
 {
 enum class Connection { Unknown, Connected, Disconnected };
-enum class Action { None, OpenMenu, JoinAudio, JoinComputerAudio, LeaveAudio, SelectComputerAudio };
+enum class Action { None, OpenMenu, JoinComputerAudio, LeaveAudio, SelectComputerAudio };
 
 struct Observation
 {
@@ -18,7 +18,7 @@ struct Observation
     QString microphoneState = "unknown";
     QString microphoneControlName;
     bool menuAvailable = false;
-    bool joinAvailable = false;
+    bool toolbarJoinVisible = false;
     bool joinComputerAvailable = false;
     bool leaveAvailable = false;
     bool computerAudioTabAvailable = false;
@@ -54,5 +54,6 @@ struct Result
 };
 
 Result readConnection(const Backend& backend, int attempts = 15);
+// Sound On requires the visible computer-audio join button for a disconnected meeting.
 Result setConnected(const Backend& backend, bool connected, int attempts = 15);
 }
