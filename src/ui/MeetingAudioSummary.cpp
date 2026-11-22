@@ -3,7 +3,6 @@
 
 #include <QBrush>
 #include <QHeaderView>
-#include <QKeyEvent>
 #include <QMouseEvent>
 
 namespace
@@ -38,24 +37,11 @@ MeetingAudioSummary::MeetingAudioSummary(QWidget* parent)
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    connect(this, &QTableWidget::itemClicked, this, &MeetingAudioSummary::activateMeetingName);
+    connect(this, &QTableWidget::itemDoubleClicked, this, [this](const QTableWidgetItem* cell) {
+        if (cell->column() == MeetingName)
+            emit meetingNameDoubleClicked(cell->data(Qt::UserRole).toString());
+    });
     hide();
-}
-
-void MeetingAudioSummary::activateMeetingName(QTableWidgetItem* cell)
-{
-    if (cell && cell->column() == MeetingName)
-        emit meetingNameActivated(cell->data(Qt::UserRole).toString());
-}
-
-void MeetingAudioSummary::keyPressEvent(QKeyEvent* event)
-{
-    if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) && currentColumn() == MeetingName) {
-        activateMeetingName(currentItem());
-        event->accept();
-        return;
-    }
-    QTableWidget::keyPressEvent(event);
 }
 
 void MeetingAudioSummary::mouseMoveEvent(QMouseEvent* event)
@@ -94,7 +80,7 @@ void MeetingAudioSummary::updateMeeting(int row, const ManagedMeeting& meeting)
     const QString title = meeting.displayTitle();
     auto* name = setCell(MeetingName, title, QColor("#A4C9F0"));
     name->setData(Qt::UserRole, meeting.key());
-    const QString hint = tr("Move this meeting card to the top.");
+    const QString hint = tr("Double-click to move this meeting card to the top.");
     name->setData(Qt::AccessibleDescriptionRole, hint);
     QStringList details{title};
     if (!meeting.profileName.isEmpty())

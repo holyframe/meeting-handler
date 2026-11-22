@@ -171,6 +171,7 @@ private:
     int meetingCardColumns_ = 3;
 
     QList<ManagedMeeting> meetings_;
+    QList<int> cardOrder_;  // Rows in meetings_, which stays in import order for the summary table.
     QList<QFrame*> meetingCards_;
     QString dragSourceKey_;
     QPoint dragPressGlobal_;

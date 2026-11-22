@@ -642,33 +642,36 @@ private slots:
         second.sound = ManagedMeeting::Sound::Off;
         window.meetings_.append(second);
         window.refreshMeetingCards();
-        window.moveMeeting(second.key(), window.meetings_.first().key());
-        QCOMPARE(window.meetings_.first().title, QString("Second meeting"));
-        QCOMPARE(window.meetings_.last().title, QString("Audio test meeting"));
-        QCOMPARE(window.audioSummary_->item(0, 0)->text(), second.title);
-        QCOMPARE(window.audioSummary_->item(0, 1)->text(), "Disconnected");
-        QCOMPARE(window.audioSummary_->item(1, 1)->text(), "Muted");
-        window.removeMeeting(second.key());
-        QCOMPARE(window.audioSummary_->rowCount(), 1);
+        const QString firstKey = window.meetings_.first().key();
+        window.moveMeeting(second.key(), firstKey);
+        QCOMPARE(window.meetingCards_.first()->property("meetingKey").toString(), second.key());
+        QCOMPARE(window.meetingCards_.last()->property("meetingKey").toString(), firstKey);
         QCOMPARE(window.audioSummary_->item(0, 0)->text(), "Audio test meeting");
-        QCOMPARE(window.audioSummary_->item(0, 2)->text(), "On");
-        window.removeMeeting(window.meetings_.first().key());
+        QCOMPARE(window.audioSummary_->item(0, 1)->text(), "Muted");
+        QCOMPARE(window.audioSummary_->item(1, 0)->text(), second.title);
+        QCOMPARE(window.audioSummary_->item(1, 1)->text(), "Disconnected");
+        window.removeMeeting(firstKey);
+        QCOMPARE(window.audioSummary_->rowCount(), 1);
+        QCOMPARE(window.audioSummary_->item(0, 0)->text(), second.title);
+        QCOMPARE(window.audioSummary_->item(0, 2)->text(), "Off");
+        QCOMPARE(window.meetingCards_.first()->property("meetingKey").toString(), second.key());
+        window.removeMeeting(second.key());
         QCOMPARE(window.audioSummary_->rowCount(), 0);
         QVERIFY(window.audioSummary_->isHidden());
     }
 
-    void clickingMeetingNameBringsItsCardToTop()
+    void doubleClickingMeetingNameBringsOnlyItsCardToTop()
     {
         MeetingControllerPane window;
         populate(window, ManagedMeeting::Sound::On, ManagedMeeting::Microphone::Muted);
         const auto first = window.meetings_.first();
-        QStringList expectedOrder{first.key()};
+        QStringList tableOrder{first.key()};
         for (int row = 1; row <= 5; ++row) {
             auto meeting = first;
             meeting.tabRuntimeId = QString::number(row);
             if (row < 5)
                 meeting.title = QString("Meeting %1").arg(row);
-            expectedOrder.append(meeting.key());
+            tableOrder.append(meeting.key());
             window.meetings_.append(meeting);
         }
         window.meetings_.last().sound = ManagedMeeting::Sound::Off;
@@ -684,39 +687,47 @@ private slots:
         QTRY_VERIFY(summary->verticalScrollBar()->maximum() > 0);
         cardScroll->setValue(cardScroll->maximum());
         summary->scrollToBottom();
+        const int tableScroll = summary->verticalScrollBar()->value();
+        QVERIFY(tableScroll > 0);
         const int lastRow = summary->rowCount() - 1;
-        const auto clickCell = [summary](int row, int column) {
+        const auto clickCell = [summary](int row, int column, bool doubleClick = false) {
             const QPoint center = summary->visualItemRect(summary->item(row, column)).center();
             QVERIFY(summary->viewport()->rect().contains(center));
             QTest::mouseClick(summary->viewport(), Qt::LeftButton, Qt::NoModifier, center);
+            if (doubleClick)
+                QTest::mouseDClick(summary->viewport(), Qt::LeftButton, Qt::NoModifier, center);
         };
+        clickCell(lastRow, 0);
+        QCOMPARE(window.meetingCards_.first()->property("meetingKey").toString(), first.key());
+        QCOMPARE(cardScroll->value(), cardScroll->maximum());
+        QTest::keyClick(summary, Qt::Key_Return);
+        QCOMPARE(window.meetingCards_.first()->property("meetingKey").toString(), first.key());
         for (int column : {1, 2}) {
-            clickCell(lastRow, column);
-            QCOMPARE(window.meetings_.first().key(), first.key());
+            clickCell(lastRow, column, true);
+            QCOMPARE(window.meetingCards_.first()->property("meetingKey").toString(), first.key());
             QCOMPARE(cardScroll->value(), cardScroll->maximum());
         }
 
-        clickCell(lastRow, 0);
-        expectedOrder.move(lastRow, 0);
-        for (int row = 0; row < expectedOrder.size(); ++row) {
-            QCOMPARE(window.meetings_.at(row).key(), expectedOrder.at(row));
-            QCOMPARE(summary->item(row, 0)->data(Qt::UserRole).toString(), expectedOrder.at(row));
+        clickCell(lastRow, 0, true);
+        QStringList cardOrder = tableOrder;
+        cardOrder.move(lastRow, 0);
+        for (int row = 0; row < tableOrder.size(); ++row) {
+            QCOMPARE(summary->item(row, 0)->data(Qt::UserRole).toString(), tableOrder.at(row));
             const auto* card = window.meetingsLayout_->itemAtPosition(row, 0)->widget();
-            QCOMPARE(card->property("meetingKey").toString(), expectedOrder.at(row));
+            QCOMPARE(card->property("meetingKey").toString(), cardOrder.at(row));
         }
-        QCOMPARE(summary->item(0, 1)->text(), "Disconnected");
-        QCOMPARE(summary->item(0, 2)->text(), "Off");
+        QCOMPARE(summary->item(lastRow, 1)->text(), "Disconnected");
+        QCOMPARE(summary->item(lastRow, 2)->text(), "Off");
         QTRY_COMPARE(cardScroll->value(), cardScroll->minimum());
-        QCOMPARE(summary->verticalScrollBar()->value(), summary->verticalScrollBar()->minimum());
+        QCOMPARE(summary->verticalScrollBar()->value(), tableScroll);
+        QCOMPARE(summary->currentRow(), lastRow);
 
         cardScroll->setValue(cardScroll->maximum());
-        clickCell(0, 0);
+        clickCell(lastRow, 0, true);
         QCOMPARE(cardScroll->value(), cardScroll->minimum());
-        QCOMPARE(window.meetings_.first().key(), expectedOrder.first());
-
-        summary->setCurrentCell(1, 0);
-        QTest::keyClick(summary, Qt::Key_Return);
-        QCOMPARE(window.meetings_.first().key(), first.key());
+        clickCell(lastRow - 1, 0, true);
+        QCOMPARE(window.meetingCards_.first()->property("meetingKey").toString(), tableOrder.at(lastRow - 1));
+        QCOMPARE(window.meetingCards_.at(1)->property("meetingKey").toString(), tableOrder.last());
         QCOMPARE(tabActivation.count(), 0);
     }
 
@@ -724,30 +735,33 @@ private slots:
     {
         MeetingControllerPane window;
         populate(window, ManagedMeeting::Sound::Unknown, ManagedMeeting::Microphone::Unknown);
-        auto second = window.meetings_.first();
-        window.meetings_.first().tabRuntimeId = "new-id";
-        second.tabRuntimeId = "second";
+        const auto first = window.meetings_.first();
+        auto second = first;
+        second.tabRuntimeId = "new-id";
         second.title = "Second meeting";
         window.meetings_.append(second);
+        window.refreshMeetingCards();
+        window.moveMeeting(second.key(), first.key());
         QSignalSpy started(window.batch_, &MeetingBatch::meetingStarted);
         QSignalSpy results(window.batch_, &MeetingBatch::meetingFinished);
         QSignalSpy done(window.batch_, &MeetingBatch::finished);
         QSignalSpy pickup(&window, &MeetingControllerPane::pickupRequested);
-        QFrame* secondCard = nullptr;
+        QFrame* firstCard = nullptr;
         connect(window.batch_, &MeetingBatch::meetingFinished, this, [&](const QJsonObject& result) {
             if (result.value("requestKey").toString() != "1234/new-id")
                 return;
             QVERIFY(window.meetingBusy_);
             QCOMPARE(window.meetingCountValue_->text(), "1/2");
             QCOMPARE(window.meetingCards_.first()->property("meetingKey").toString(), "1234/resolved-tab");
-            QCOMPARE(window.audioSummary_->item(0, 1)->text(), "Muted");
-            QCOMPARE(window.audioSummary_->item(0, 2)->text(), "On");
-            QCOMPARE(window.meetingCards_.at(1), secondCard);
-            QCOMPARE(window.audioSummary_->item(1, 2)->text(), "Unknown");
-            QCOMPARE(window.meetings_.at(1).sound, ManagedMeeting::Sound::Unknown);
+            QCOMPARE(window.audioSummary_->item(1, 0)->data(Qt::UserRole).toString(), "1234/resolved-tab");
+            QCOMPARE(window.audioSummary_->item(1, 1)->text(), "Muted");
+            QCOMPARE(window.audioSummary_->item(1, 2)->text(), "On");
+            QCOMPARE(window.meetingCards_.at(1), firstCard);
+            QCOMPARE(window.audioSummary_->item(0, 2)->text(), "Unknown");
+            QCOMPARE(window.meetings_.first().sound, ManagedMeeting::Sound::Unknown);
         });
         window.uiaRefreshButton_->click();
-        secondCard = window.meetingCards_.at(1);
+        firstCard = window.meetingCards_.at(1);
         QCOMPARE(window.batchProgress_->text(), "Checking meeting 1 of 2");
         QVERIFY(!window.cancelRemaining_->isHidden());
         window.requestRefreshConnections();
@@ -755,7 +769,8 @@ private slots:
         QCOMPARE(pickup.size(), 0);
         QTRY_COMPARE_WITH_TIMEOUT(done.size(), 1, 5000);
         QCOMPARE(started.size(), 2);
-        QCOMPARE(started.at(1).at(2).toString(), second.key());
+        QCOMPARE(started.at(0).at(2).toString(), second.key());
+        QCOMPARE(started.at(1).at(2).toString(), first.key());
         QCOMPARE(results.size(), 2);
         QCOMPARE(results.first().first().toJsonObject().value("fixturePid"),
                  results.last().first().toJsonObject().value("fixturePid"));
@@ -763,6 +778,9 @@ private slots:
         QVERIFY(window.batchProgress_->isHidden());
         QVERIFY(window.uiaRefreshButton_->isEnabled());
         QVERIFY(window.statusMessage().contains("2 verified"));
+        QCOMPARE(window.meetingCards_.first()->property("meetingKey").toString(), "1234/resolved-tab");
+        QCOMPARE(window.audioSummary_->item(0, 0)->data(Qt::UserRole).toString(), first.key());
+        QCOMPARE(window.audioSummary_->item(1, 0)->data(Qt::UserRole).toString(), "1234/resolved-tab");
     }
 
     void cancelRemainingFinishesCurrentAndSkipsTheRest_data()

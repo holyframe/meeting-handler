@@ -14,12 +14,8 @@ public:
     void updateMeeting(int row, const ManagedMeeting& meeting);
 
 signals:
-    void meetingNameActivated(const QString& key);
+    void meetingNameDoubleClicked(const QString& key);
 
 protected:
-    void keyPressEvent(QKeyEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
-
-private:
-    void activateMeetingName(QTableWidgetItem* cell);
 };

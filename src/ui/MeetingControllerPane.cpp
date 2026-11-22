@@ -266,12 +266,10 @@ QWidget* MeetingControllerPane::createDashboardPage()
     meetingCountLabel_ = hiddenLabel("0", "countPill", page);
 
     audioSummary_ = new MeetingAudioSummary(page);
-    connect(audioSummary_, &MeetingAudioSummary::meetingNameActivated, this, [this](const QString& key) {
-        if (meetings_.isEmpty())
+    connect(audioSummary_, &MeetingAudioSummary::meetingNameDoubleClicked, this, [this](const QString& key) {
+        if (cardOrder_.isEmpty())
             return;
-        moveMeeting(key, meetings_.first().key());
-        audioSummary_->setCurrentCell(0, 0);
-        audioSummary_->scrollToTop();
+        moveMeeting(key, meetings_.at(cardOrder_.first()).key());
         auto* scroll = meetingsArea_->verticalScrollBar();
         scroll->setValue(scroll->minimum());
     });
@@ -1031,9 +1029,11 @@ void MeetingControllerPane::refreshMeetingCards()
 
     meetingEmptyCard_->setVisible(meetings_.isEmpty());
 
-    for (int index = 0; index < meetings_.size(); ++index)
+    while (cardOrder_.size() < meetings_.size())
+        cardOrder_.append(static_cast<int>(cardOrder_.size()));
+    for (int row : std::as_const(cardOrder_))
     {
-        QFrame* card = createMeetingCard(meetings_.at(index));
+        QFrame* card = createMeetingCard(meetings_.at(row));
         meetingCards_.append(card);
     }
     audioSummary_->setMeetings(meetings_);
@@ -1127,7 +1127,7 @@ void MeetingControllerPane::refreshBatchCard(const QString& previousKey, const M
         card->deleteLater();
         card = replacement;
         replacement->show();
-        audioSummary_->updateMeeting(row, meeting);
+        audioSummary_->updateMeeting(cardOrder_.at(row), meeting);
         break;
     }
     fitMeetingCards();
@@ -1382,22 +1382,22 @@ void MeetingControllerPane::moveMeeting(const QString& fromKey, const QString& t
 
     int from = -1;
     int to = -1;
-    for (int index = 0; index < meetings_.size(); ++index)
+    for (int index = 0; index < cardOrder_.size(); ++index)
     {
-        if (meetings_.at(index).key() == fromKey)
+        const QString key = meetings_.at(cardOrder_.at(index)).key();
+        if (key == fromKey)
             from = index;
-        if (meetings_.at(index).key() == toKey)
+        if (key == toKey)
             to = index;
     }
     if (from < 0 || to < 0 || from == to)
         return;
 
     clearDrag();
-    meetings_.move(from, to);
+    cardOrder_.move(from, to);
     meetingCards_.move(from, to);
-    audioSummary_->setMeetings(meetings_);
     layoutMeetingCards();
-    appendLog(QString("Moved \"%1\" in the meeting list.").arg(meetings_.at(to).title));
+    appendLog(QString("Moved \"%1\" in the card list.").arg(meetings_.at(cardOrder_.at(to)).title));
 }
 
 void MeetingControllerPane::removeMeeting(const QString& key)
@@ -1413,6 +1413,11 @@ void MeetingControllerPane::removeMeeting(const QString& key)
         appendLog(QString("Removed %1 from managed meetings.").arg(label));
 
         meetings_.removeAt(index);
+        cardOrder_.removeOne(index);
+        for (int& row : cardOrder_) {
+            if (row > index)
+                --row;
+        }
         refreshMeetingCards();
         return;
     }
@@ -1619,20 +1624,18 @@ void MeetingControllerPane::startMeetingBatch(MeetingBatch::Operation operation)
     if (meetings_.isEmpty() || meetingBusy_ || pickupInProgress_)
         return;
 
-    QJsonArray targets;
-    for (const ManagedMeeting& meeting : std::as_const(meetings_))
-    {
-        targets.append(meeting.automationTarget());
-    }
     batchOperation_ = operation;
     batchChanged_ = 0;
     batchAlready_ = 0;
     batchFailures_.clear();
     const QString action = operation == MeetingBatch::Operation::Mute ? "Mute All"
         : operation == MeetingBatch::Operation::SoundOff ? "Sound Off All" : "Connection check";
-    const QString message = QString("%1 · %2 meeting(s)").arg(action).arg(targets.size());
+    const QString message = QString("%1 · %2 meeting(s)").arg(action).arg(meetings_.size());
     appendLog(message);
     setMeetingBusy(true, message);
+    QJsonArray targets;
+    for (int row : std::as_const(cardOrder_))
+        targets.append(meetings_.at(row).automationTarget());
     batch_->start(operation, targets);
 }
 
