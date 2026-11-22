@@ -64,7 +64,8 @@ BOOL CALLBACK EnumProc(HWND hwnd, LPARAM param) {
     // Checking the process as well as the title is essential here. The Windows
     // panel is titled "Live captions", which also contains "live caption" and
     // would otherwise be mistaken for Chrome when Chrome is selected.
-    const std::wstring title = ToLower(WindowTitle(hwnd));
+    const std::wstring title = ctx->choice == CaptionSourceChoice::Chrome && image == L"chrome.exe"
+                                   ? ToLower(WindowTitle(hwnd)) : std::wstring{};
     if (caption_source_detail::IsWindowForChoice(ctx->choice, image, title)) {
         ctx->found = hwnd;
         ctx->kind = ctx->choice == CaptionSourceChoice::Chrome
@@ -297,6 +298,10 @@ CaptionSource::Candidate CaptionSource::FindCaptionWindow(CaptionSourceChoice ch
     ctx.choice = choice;
     ::EnumWindows(EnumProc, reinterpret_cast<LPARAM>(&ctx));
     return Candidate{ctx.found, ctx.kind};
+}
+
+bool CaptionSource::WindowsLiveCaptionsWindowOpen() {
+    return FindCaptionWindow(CaptionSourceChoice::WindowsLiveCaptions).hwnd != nullptr;
 }
 
 bool CaptionSource::Attach(CaptionSourceChoice choice) {

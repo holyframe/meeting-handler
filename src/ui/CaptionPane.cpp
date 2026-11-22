@@ -11,11 +11,13 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
+#include <QDesktopServices>
 #include <QDir>
 #include <QFileDialog>
 #include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QKeyEvent>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QSaveFile>
@@ -27,8 +29,11 @@
 #include <QSplitter>
 #include <QStyleHints>
 #include <QToolButton>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <QWindow>
+#include <QtConcurrentRun>
+#include <utility>
 
 namespace {
 CaptionSourceChoice ToSourceChoice(CaptionSourcePreference source) {
@@ -70,11 +75,41 @@ POINT nativeScreenPoint(QPoint global) {
 }
 }
 
-CaptionPane::CaptionPane(QWidget* targetSidebar, QWidget* dragStrip, QWidget* parent)
-    : QWidget(parent), m_dragStrip(dragStrip), m_targetSidebar(targetSidebar) {
+CaptionPane::CaptionPane(QWidget* targetSidebar, QWidget* dragStrip, QWidget* parent,
+                         windows_captions::Backend windowsCaptions)
+    : QWidget(parent), m_windowsCaptions(std::move(windowsCaptions)), m_dragStrip(dragStrip), m_targetSidebar(targetSidebar) {
     setObjectName("captionPane");
     setMinimumHeight(175);
     createControls();
+    m_windowsCaptionsMonitor.setInterval(2000);
+    connect(&m_windowsCaptionsMonitor, &QTimer::timeout, this, [this] {
+        const bool open = m_windowsCaptions.windowOpen();
+        if (open != m_windowsCaptionsWindowOpen) {
+            m_windowsCaptionsWindowOpen = open;
+            ShowWindowsCaptionsState(open);
+        }
+    });
+    connect(&m_windowsCaptionsJob, &QFutureWatcherBase::finished, this, [this] {
+        const auto result = m_windowsCaptionsJob.result();
+        m_windowsCaptionsRequest.reset();
+        // The caption window can appear after Windows has confirmed its switch.
+        m_windowsCaptionsWindowOpen = m_windowsCaptions.windowOpen();
+        ShowWindowsCaptionsState(result.enabled.value_or(m_windowsCaptionsWindowOpen));
+        m_windowsCaptionsMonitor.start();
+        if (result.error.isEmpty()) {
+            SetStatus(m_windowsCaptionsOn ? L"Windows Live Captions is on." : L"Windows Live Captions is off.");
+            return;
+        }
+        emit logLine(result.error);
+        auto* message = new QMessageBox(QMessageBox::Warning, tr("Windows Live Captions"), result.error,
+                                        QMessageBox::Close, window());
+        message->setAttribute(Qt::WA_DeleteOnClose);
+        auto* open = message->addButton(tr("Open Windows caption settings"), QMessageBox::ActionRole);
+        connect(open, &QPushButton::clicked, message, [] {
+            QDesktopServices::openUrl(QUrl(QString::fromLatin1(windows_captions::settingsUri)));
+        });
+        message->open();
+    });
     m_followTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_followTimer, &QTimer::timeout, this, [this] { m_activeWindowFollower.Poll(); });
     connect(&m_pickTimer, &QTimer::timeout, this, [this] {
@@ -98,6 +133,8 @@ CaptionPane::CaptionPane(QWidget* targetSidebar, QWidget* dragStrip, QWidget* pa
 }
 
 CaptionPane::~CaptionPane() {
+    m_cancelWindowsCaptions.request_stop();
+    m_windowsCaptionsJob.waitForFinished();
     qApp->removeNativeEventFilter(this);
     m_engine.Stop();
     discardPendingCaptions();
@@ -163,12 +200,14 @@ void CaptionPane::createControls() {
     m_pressEnterCheck->setMinimumWidth(96);
     actions->addWidget(m_pressEnterCheck);
     m_listenButton = iconButton(toolbar, "toggleListening", tr("Stop caption listening"), 0xE71A);
+    m_windowsCaptionsButton = iconButton(toolbar, "toggleWindowsCaptions", tr("Turn on Windows Live Captions"), 0xE7F0);
+    m_windowsCaptionsButton->setCheckable(true);
     auto* save = iconButton(toolbar, "saveCaptions", tr("Save captions"), 0xE74E);
     auto* clear = iconButton(toolbar, "clearCaptions", tr("Clear captions"), 0xE74D);
     auto* settings = iconButton(toolbar, "captionPreferences", tr("Settings"), 0xE713);
     m_logButton = iconButton(toolbar, "toggleActivityLog", tr("Log"), 0xE7BA);
     m_logButton->setCheckable(true);
-    for (auto* button : {m_listenButton, save, clear, settings, m_logButton}) actions->addWidget(button);
+    for (auto* button : {m_listenButton, m_windowsCaptionsButton, save, clear, settings, m_logButton}) actions->addWidget(button);
     actions->addStretch();
     auto* formatting = new QHBoxLayout;
     formatting->setSpacing(6);
@@ -206,6 +245,7 @@ void CaptionPane::createControls() {
     connect(clear, &QToolButton::clicked, this, &CaptionPane::OnClear);
     connect(settings, &QToolButton::clicked, this, &CaptionPane::OnSettings);
     connect(m_listenButton, &QToolButton::clicked, this, &CaptionPane::OnToggleListening);
+    connect(m_windowsCaptionsButton, &QToolButton::clicked, this, &CaptionPane::RequestWindowsCaptions);
     connect(m_logButton, &QToolButton::toggled, this, &CaptionPane::logToggled);
     connect(m_targets, &CaptionTargetList::selectionChanged, this, &CaptionPane::UpdateWindowTitle);
     connect(m_targets, &CaptionTargetList::statusChanged, this, &CaptionPane::logLine);
@@ -240,6 +280,11 @@ bool CaptionPane::initialize(const Settings& settings) {
     qApp->installNativeEventFilter(this);
     m_followTimer.start(10);
     m_initialized = true;
+    m_windowsCaptionsWindowOpen = m_windowsCaptions.windowOpen();
+    ShowWindowsCaptionsState(m_windowsCaptionsWindowOpen);
+    m_windowsCaptionsMonitor.start();
+    if (settings.startWindowsLiveCaptions && !m_windowsCaptionsOn)
+        QTimer::singleShot(0, this, [this] { RequestWindowsCaptions(true); });
     if (!m_engine.Start(this, settings.ResolvedTranscriptPath(), settings.pollIntervalMs, ToSourceChoice(settings.captionSource)))
         SetStatus(L"Could not start caption capture.");
     else SetStatus(L"Saving transcript to " + settings.ResolvedTranscriptPath());
@@ -485,6 +530,27 @@ void CaptionPane::UpdateListeningButton() {
     m_listenButton->setText(QChar(paused ? 0xE768 : 0xE71A));
     m_listenButton->setAccessibleName(paused ? tr("Resume caption listening") : tr("Stop caption listening"));
     m_listenButton->setToolTip(m_listenButton->accessibleName());
+}
+
+void CaptionPane::ShowWindowsCaptionsState(bool enabled) {
+    m_windowsCaptionsOn = enabled;
+    m_windowsCaptionsButton->setChecked(enabled);
+    m_windowsCaptionsButton->setEnabled(!m_windowsCaptionsRequest.has_value());
+    QString label;
+    if (m_windowsCaptionsRequest.has_value())
+        label = *m_windowsCaptionsRequest ? tr("Turning on Windows Live Captions…") : tr("Turning off Windows Live Captions…");
+    else
+        label = enabled ? tr("Turn off Windows Live Captions") : tr("Turn on Windows Live Captions");
+    m_windowsCaptionsButton->setAccessibleName(label);
+    m_windowsCaptionsButton->setToolTip(label);
+}
+
+void CaptionPane::RequestWindowsCaptions(bool enabled) {
+    if (m_windowsCaptionsRequest.has_value()) return;
+    m_windowsCaptionsMonitor.stop();
+    m_windowsCaptionsRequest = enabled;
+    ShowWindowsCaptionsState(m_windowsCaptionsOn);
+    m_windowsCaptionsJob.setFuture(QtConcurrent::run(m_windowsCaptions.setEnabled, enabled, m_cancelWindowsCaptions.get_token()));
 }
 
 void CaptionPane::OnSettings() {

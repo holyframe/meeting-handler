@@ -2,6 +2,7 @@
 #include "CaptionTheme.h"
 
 #include <windows.h>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -115,6 +116,10 @@ bool ShowSettingsDialog(QWidget* owner, Settings& settings) {
     source->setCurrentIndex(settings.captionSource == CaptionSourcePreference::ChromeLiveCaption ? 1 : 0);
     form->addRow(QObject::tr("Caption source"), source);
     form->addRow(QString(), new QLabel(QObject::tr("Choose which live-caption window this app reads.")));
+    auto* startCaptions = new QCheckBox(QObject::tr("Start Windows Live Captions when Meeting Handler opens"), &dialog);
+    startCaptions->setObjectName("startWindowsLiveCaptions");
+    startCaptions->setChecked(settings.startWindowsLiveCaptions);
+    form->addRow(QObject::tr("Startup"), startCaptions);
     auto* theme = new QComboBox(&dialog);
     theme->setObjectName("captionTheme");
     theme->addItems({QObject::tr("Dark"), QObject::tr("Light"), QObject::tr("System")});
@@ -161,6 +166,7 @@ bool ShowSettingsDialog(QWidget* owner, Settings& settings) {
     if (dialog.exec() != QDialog::Accepted) return false;
     settings.captionSource = source->currentIndex() == 1 ? CaptionSourcePreference::ChromeLiveCaption
                                                         : CaptionSourcePreference::WindowsLiveCaptions;
+    settings.startWindowsLiveCaptions = startCaptions->isChecked();
     settings.theme = static_cast<UiTheme>(theme->currentIndex());
     settings.saveFolder = folder->text().toStdWString();
     settings.hotkeyModifiers = hotkey->modifiers;

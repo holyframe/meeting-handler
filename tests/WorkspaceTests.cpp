@@ -14,15 +14,18 @@
 #include <QFile>
 #include <QIcon>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QPushButton>
+#include <QScopeGuard>
 #include <QSettings>
 #include <QSplitter>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
 #include <QToolButton>
+#include <atomic>
 
 namespace {
 QRect boundsIn(QWidget* widget, QWidget* parent) {
@@ -54,7 +57,7 @@ void verifyColumnsFit(QWidget* workspace) {
     QCOMPARE(boundsIn(view, captions).right(), captions->rect().right());
     QCOMPARE(boundsIn(toolbar, captions).bottom(), captions->rect().bottom());
     QList<QRect> controls;
-    for (auto name : {"sendCaption", "pressEnter", "toggleListening", "saveCaptions", "clearCaptions",
+    for (auto name : {"sendCaption", "pressEnter", "toggleListening", "toggleWindowsCaptions", "saveCaptions", "clearCaptions",
                       "captionPreferences", "toggleActivityLog", "captionFont", "captionSize", "captionSpacing"}) {
         auto* control = toolbar->findChild<QWidget*>(name);
         QVERIFY2(control && control->isVisible(), name);
@@ -71,6 +74,96 @@ void verifyColumnsFit(QWidget* workspace) {
 class WorkspaceTests : public QObject {
     Q_OBJECT
 private slots:
+    void windowsCaptionsButtonAndStartup_data() {
+        QTest::addColumn<bool>("initiallyOn");
+        QTest::addColumn<bool>("startAutomatically");
+        QTest::newRow("manual-off") << false << false;
+        QTest::newRow("manual-already-on") << true << false;
+        QTest::newRow("automatic-off") << false << true;
+        QTest::newRow("automatic-already-on") << true << true;
+    }
+
+    void windowsCaptionsButtonAndStartup() {
+        QFETCH(bool, initiallyOn);
+        QFETCH(bool, startAutomatically);
+        std::atomic<bool> state{initiallyOn};
+        std::atomic<int> requests{0};
+        windows_captions::Backend backend{
+            [&] { return state.load(); },
+            [&](bool desired, std::stop_token) {
+                ++requests;
+                state = desired;
+                return windows_captions::Result{desired, {}};
+            }};
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        Settings settings;
+        settings.startWindowsLiveCaptions = startAutomatically;
+        settings.transcriptPath = temp.filePath("captions.txt").toStdWString();
+        settings.hotkeyVirtualKey = 0;
+        QWidget owner, sidebar, strip;
+        CaptionPane pane(&sidebar, &strip, &owner, backend);
+        auto* listen = pane.findChild<QToolButton*>("toggleListening");
+        auto* system = pane.findChild<QToolButton*>("toggleWindowsCaptions");
+        QVERIFY(listen && system);
+        listen->click();
+        QVERIFY(pane.initialize(settings));
+        const bool expectedOn = initiallyOn || startAutomatically;
+        const int startupRequests = startAutomatically && !initiallyOn ? 1 : 0;
+        QCoreApplication::processEvents();
+        QTRY_COMPARE(requests.load(), startupRequests);
+        QTRY_VERIFY(system->isEnabled() && system->isChecked() == expectedOn);
+        QCOMPARE(state.load(), expectedOn);
+        for (bool desired : {!expectedOn, expectedOn}) {
+            system->click();
+            QVERIFY(!system->isEnabled());
+            system->click();
+            QTRY_VERIFY(system->isEnabled());
+            QCOMPARE(system->isChecked(), desired);
+            QCOMPARE(state.load(), desired);
+            QCOMPARE(listen->accessibleName(), "Resume caption listening");
+        }
+        QCOMPARE(requests.load(), startupRequests + 2);
+        state = !expectedOn;
+        QTRY_COMPARE(system->isChecked(), !expectedOn);
+        QCOMPARE(requests.load(), startupRequests + 2);
+    }
+
+    void liveWindowsCaptionSwitch() {
+        if (qEnvironmentVariableIntValue("MEETING_HANDLER_TEST_LIVE_CAPTIONS") != 1)
+            QSKIP("Enable this desktop integration test explicitly to operate the Windows setting.");
+        auto native = windows_captions::systemBackend();
+        if (native.windowOpen()) QSKIP("Windows Live Captions is already in use.");
+        const auto restore = qScopeGuard([&] {
+            if (native.windowOpen()) native.setEnabled(false, {});
+        });
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        Settings settings;
+        settings.startWindowsLiveCaptions = true;
+        settings.hotkeyVirtualKey = 0;
+        settings.transcriptPath = temp.filePath("captions.txt").toStdWString();
+        QWidget owner, sidebar, strip;
+        CaptionPane pane(&sidebar, &strip, &owner);
+        QString lastStatus;
+        connect(&pane, &CaptionPane::logLine, &pane, [&](const QString& line) {
+            lastStatus = line;
+            qInfo().noquote() << line;
+        });
+        // Pause the transcript before initializing so the live test never reads desktop captions.
+        pane.findChild<QToolButton*>("toggleListening")->click();
+        auto* button = pane.findChild<QToolButton*>("toggleWindowsCaptions");
+        QVERIFY(pane.initialize(settings));
+        QCoreApplication::processEvents();
+        QTRY_VERIFY_WITH_TIMEOUT(button->isEnabled() || pane.window()->findChild<QMessageBox*>(), 18000);
+        QVERIFY2(button->isChecked(), qPrintable(lastStatus));
+        QTRY_VERIFY_WITH_TIMEOUT(native.windowOpen(), 10000);
+        button->click();
+        QTRY_VERIFY_WITH_TIMEOUT(button->isEnabled() || pane.window()->findChild<QMessageBox*>(), 18000);
+        QVERIFY2(!button->isChecked(), qPrintable(lastStatus));
+        QTRY_VERIFY_WITH_TIMEOUT(!native.windowOpen(), 10000);
+    }
+
     void captionDialogSettingsAndSave() {
         QTemporaryDir temp;
         QVERIFY(temp.isValid());
@@ -87,8 +180,10 @@ private slots:
                 auto* source = dialog->findChild<QComboBox*>("captionSource");
                 auto* theme = dialog->findChild<QComboBox*>("captionTheme");
                 auto* hotkey = dialog->findChild<QLineEdit*>("sendHotkey");
-                fieldsFound = source && theme && hotkey;
+                auto* startup = dialog->findChild<QCheckBox*>("startWindowsLiveCaptions");
+                fieldsFound = source && theme && hotkey && startup;
                 if (fieldsFound) {
+                    startup->setChecked(true);
                     source->setCurrentIndex(1);
                     theme->setCurrentIndex(1);
                     QTest::keyClick(hotkey, Qt::Key_F8, Qt::ControlModifier | Qt::AltModifier);
@@ -100,9 +195,19 @@ private slots:
         };
         QVERIFY(!editSettings(false));
         QVERIFY(fieldsFound);
+        QVERIFY(!settings.startWindowsLiveCaptions);
         QCOMPARE(settings.theme, UiTheme::Dark);
         QCOMPARE(settings.hotkeyVirtualKey, 0U);
         QVERIFY(editSettings(true));
+        QVERIFY(settings.startWindowsLiveCaptions);
+        settings.Save();
+        Settings savedSettings;
+        savedSettings.Load();
+        QVERIFY(savedSettings.startWindowsLiveCaptions);
+        settings.startWindowsLiveCaptions = false;
+        settings.Save();
+        savedSettings.Load();
+        QVERIFY(!savedSettings.startWindowsLiveCaptions);
         QCOMPARE(settings.theme, UiTheme::Light);
         QCOMPARE(settings.captionSource, CaptionSourcePreference::ChromeLiveCaption);
         QCOMPARE(settings.hotkeyVirtualKey, unsigned(VK_F8));
