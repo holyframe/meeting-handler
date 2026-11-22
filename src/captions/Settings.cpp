@@ -54,7 +54,6 @@ void Settings::Load() {
     captionSource = source == static_cast<int>(CaptionSourcePreference::ChromeLiveCaption)
                         ? CaptionSourcePreference::ChromeLiveCaption
                         : CaptionSourcePreference::WindowsLiveCaptions;
-    startWindowsLiveCaptions = ReadInt(L"StartWindowsLiveCaptions", 0, file) != 0;
     const int savedTheme = ReadInt(L"Theme", static_cast<int>(theme), file);
     theme = savedTheme >= static_cast<int>(UiTheme::Dark) &&
                     savedTheme <= static_cast<int>(UiTheme::System)
@@ -104,7 +103,6 @@ void Settings::Save() const {
     const std::wstring file = FilePath();
 
     WriteInt(L"CaptionSource", static_cast<int>(captionSource), file);
-    WriteInt(L"StartWindowsLiveCaptions", startWindowsLiveCaptions ? 1 : 0, file);
     WriteInt(L"Theme", static_cast<int>(theme), file);
 
     WriteString(L"FontFamily", fontFamily, file);

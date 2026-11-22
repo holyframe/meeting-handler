@@ -39,6 +39,7 @@ public:
     // Looks for a supported caption window. Returns true if one is attached.
     bool Attach(CaptionSourceChoice choice = CaptionSourceChoice::WindowsLiveCaptions);
     static bool WindowsLiveCaptionsWindowOpen();
+    static bool LaunchWindowsLiveCaptions();
     void Detach();
 
     bool IsAttached() const { return m_textElement != nullptr; }

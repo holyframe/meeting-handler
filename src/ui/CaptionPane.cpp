@@ -1,7 +1,9 @@
 #include "CaptionPane.h"
+#include "AudioLevelControl.h"
 #include "CaptionTargetList.h"
 #include "CaptionTheme.h"
 #include "CaptionView.h"
+#include "PingStatusDialog.h"
 #include "SettingsDialog.h"
 #include "captions/CaptionSave.h"
 #include "resource.h"
@@ -11,12 +13,12 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
-#include <QDesktopServices>
 #include <QDir>
 #include <QFileDialog>
 #include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPushButton>
@@ -29,10 +31,8 @@
 #include <QSplitter>
 #include <QStyleHints>
 #include <QToolButton>
-#include <QUrl>
+#include <QToolTip>
 #include <QVBoxLayout>
-#include <QWindow>
-#include <QtConcurrentRun>
 #include <utility>
 
 namespace {
@@ -75,40 +75,22 @@ POINT nativeScreenPoint(QPoint global) {
 }
 }
 
-CaptionPane::CaptionPane(QWidget* targetSidebar, QWidget* dragStrip, QWidget* parent,
-                         windows_captions::Backend windowsCaptions)
-    : QWidget(parent), m_windowsCaptions(std::move(windowsCaptions)), m_dragStrip(dragStrip), m_targetSidebar(targetSidebar) {
+CaptionPane::CaptionPane(QWidget* targetSidebar, QWidget* parent,
+                         WindowsCaptionLauncher windowsCaptions)
+    : QWidget(parent), m_windowsCaptions(std::move(windowsCaptions)),
+      m_targetSidebar(targetSidebar) {
     setObjectName("captionPane");
     setMinimumHeight(175);
     createControls();
-    m_windowsCaptionsMonitor.setInterval(2000);
-    connect(&m_windowsCaptionsMonitor, &QTimer::timeout, this, [this] {
-        const bool open = m_windowsCaptions.windowOpen();
-        if (open != m_windowsCaptionsWindowOpen) {
-            m_windowsCaptionsWindowOpen = open;
-            ShowWindowsCaptionsState(open);
+    m_windowsCaptionStartTimer.setInterval(250);
+    connect(&m_windowsCaptionStartTimer, &QTimer::timeout, this, [this] {
+        if (m_windowsCaptions.windowOpen()) {
+            m_windowsCaptionStartTimer.stop();
+            SetListeningPaused(false);
+        } else if (m_windowsCaptionStartTime.hasExpired(15000)) {
+            WindowsCaptionStartFailed(tr("The Windows Live Captions window did not appear. "
+                                         "Open Live Captions in Windows and try listening again."));
         }
-    });
-    connect(&m_windowsCaptionsJob, &QFutureWatcherBase::finished, this, [this] {
-        const auto result = m_windowsCaptionsJob.result();
-        m_windowsCaptionsRequest.reset();
-        // The caption window can appear after Windows has confirmed its switch.
-        m_windowsCaptionsWindowOpen = m_windowsCaptions.windowOpen();
-        ShowWindowsCaptionsState(result.enabled.value_or(m_windowsCaptionsWindowOpen));
-        m_windowsCaptionsMonitor.start();
-        if (result.error.isEmpty()) {
-            SetStatus(m_windowsCaptionsOn ? L"Windows Live Captions is on." : L"Windows Live Captions is off.");
-            return;
-        }
-        emit logLine(result.error);
-        auto* message = new QMessageBox(QMessageBox::Warning, tr("Windows Live Captions"), result.error,
-                                        QMessageBox::Close, window());
-        message->setAttribute(Qt::WA_DeleteOnClose);
-        auto* open = message->addButton(tr("Open Windows caption settings"), QMessageBox::ActionRole);
-        connect(open, &QPushButton::clicked, message, [] {
-            QDesktopServices::openUrl(QUrl(QString::fromLatin1(windows_captions::settingsUri)));
-        });
-        message->open();
     });
     m_followTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_followTimer, &QTimer::timeout, this, [this] { m_activeWindowFollower.Poll(); });
@@ -133,8 +115,8 @@ CaptionPane::CaptionPane(QWidget* targetSidebar, QWidget* dragStrip, QWidget* pa
 }
 
 CaptionPane::~CaptionPane() {
-    m_cancelWindowsCaptions.request_stop();
-    m_windowsCaptionsJob.waitForFinished();
+    m_audioThread.quit();
+    m_audioThread.wait();
     qApp->removeNativeEventFilter(this);
     m_engine.Stop();
     discardPendingCaptions();
@@ -150,13 +132,16 @@ void CaptionPane::createControls() {
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
-    m_dragStrip->installEventFilter(this);
-
     auto* sidebar = m_targetSidebar;
     sidebar->installEventFilter(this);
     auto* sideLayout = new QVBoxLayout(sidebar);
     sideLayout->setContentsMargins(0, 8, 0, 8);
     sideLayout->setSpacing(6);
+    auto* title = new QLabel(tr("Caption target"), sidebar);
+    title->setObjectName("captionTargetHeading");
+    title->setAlignment(Qt::AlignCenter);
+    title->setWordWrap(true);
+    sideLayout->addWidget(title);
     m_pickButton = iconButton(sidebar, "pickCaptionTarget", tr("Pick up window"), 0xE78B);
     m_pickButton->setFixedSize(32, 32);
     m_pickButton->installEventFilter(this);
@@ -170,11 +155,26 @@ void CaptionPane::createControls() {
     m_targets = new CaptionTargetList(m_webInputPicker);
     targetScroll->setWidget(m_targets);
     sideLayout->addWidget(targetScroll, 1);
+    auto* ping = iconButton(sidebar, "showPingStatus", tr("Show ping status for google.com"), 0xE712);
+    ping->setFixedSize(32, 26);
+    ping->setFocusPolicy(Qt::StrongFocus);
+    sideLayout->addWidget(ping, 0, Qt::AlignHCenter);
+    connect(ping, &QToolButton::clicked, this, [this] {
+        if (!m_pingStatus) {
+            m_pingStatus = new PingStatusDialog(this);
+            caption_theme::apply(m_pingStatus, m_settings.theme);
+        }
+        m_pingStatus->showNormal();
+        m_pingStatus->raise();
+        m_pingStatus->activateWindow();
+    });
+    auto* formatting = createFormattingBar();
+    layout->addWidget(formatting);
     m_rows = new QSplitter(Qt::Vertical, this);
     m_rows->setObjectName("captionRows");
     m_rows->setChildrenCollapsible(false);
     m_rows->setHandleWidth(6);
-    layout->addWidget(m_rows);
+    layout->addWidget(m_rows, 1);
     m_view = new CaptionView;
     m_view->setMinimumHeight(80);
     m_rows->addWidget(m_view);
@@ -200,39 +200,19 @@ void CaptionPane::createControls() {
     m_pressEnterCheck->setMinimumWidth(96);
     actions->addWidget(m_pressEnterCheck);
     m_listenButton = iconButton(toolbar, "toggleListening", tr("Stop caption listening"), 0xE71A);
-    m_windowsCaptionsButton = iconButton(toolbar, "toggleWindowsCaptions", tr("Turn on Windows Live Captions"), 0xE7F0);
-    m_windowsCaptionsButton->setCheckable(true);
     auto* save = iconButton(toolbar, "saveCaptions", tr("Save captions"), 0xE74E);
     auto* clear = iconButton(toolbar, "clearCaptions", tr("Clear captions"), 0xE74D);
     auto* settings = iconButton(toolbar, "captionPreferences", tr("Settings"), 0xE713);
     m_logButton = iconButton(toolbar, "toggleActivityLog", tr("Log"), 0xE7BA);
     m_logButton->setCheckable(true);
-    for (auto* button : {m_listenButton, m_windowsCaptionsButton, save, clear, settings, m_logButton}) actions->addWidget(button);
+    for (auto* button : {m_listenButton, save, clear, settings, m_logButton}) actions->addWidget(button);
     actions->addStretch();
-    auto* formatting = new QHBoxLayout;
-    formatting->setSpacing(6);
-    formatting->setAlignment(Qt::AlignRight);
-    m_toolbarGroups->addLayout(formatting);
-    const auto combo = [&](const char* name, const QString& label, int width) {
-        auto* box = new QComboBox(toolbar);
-        box->setObjectName(name);
-        box->setAccessibleName(label);
-        box->setToolTip(label);
-        box->setFixedSize(width, 23);
-        formatting->addWidget(box);
-        return box;
-    };
-    m_fontCombo = combo("captionFont", tr("Font"), 140);
-    m_sizeCombo = combo("captionSize", tr("Font size"), 62);
-    m_spacingCombo = combo("captionSpacing", tr("Line spacing"), 62);
-    m_fontCombo->addItems(QFontDatabase::families());
-    for (int size : {8, 9, 10, 11, 12, 13, 14, 16, 18, 20, 22, 24, 28, 32, 36, 42, 48})
-        m_sizeCombo->addItem(QString::number(size));
-    for (double spacing : {1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.75, 2.0, 2.5, 3.0})
-        m_spacingCombo->addItem(QString::number(spacing));
+    auto* audio = createAudioControls(toolbar);
+    m_toolbarGroups->addWidget(audio, 0, Qt::AlignRight);
     const auto margins = bottom->contentsMargins();
-    setMinimumWidth(qMax(actions->minimumSize().width(), formatting->minimumSize().width())
-                    + margins.left() + margins.right());
+    const int toolbarMinWidth = qMax(actions->minimumSize().width(), audio->minimumSizeHint().width())
+                                + margins.left() + margins.right();
+    setMinimumWidth(qMax(toolbarMinWidth, formatting->minimumSizeHint().width()));
     toolbar->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     m_rows->addWidget(toolbar);
     m_rows->setStretchFactor(0, 1);
@@ -245,7 +225,6 @@ void CaptionPane::createControls() {
     connect(clear, &QToolButton::clicked, this, &CaptionPane::OnClear);
     connect(settings, &QToolButton::clicked, this, &CaptionPane::OnSettings);
     connect(m_listenButton, &QToolButton::clicked, this, &CaptionPane::OnToggleListening);
-    connect(m_windowsCaptionsButton, &QToolButton::clicked, this, &CaptionPane::RequestWindowsCaptions);
     connect(m_logButton, &QToolButton::toggled, this, &CaptionPane::logToggled);
     connect(m_targets, &CaptionTargetList::selectionChanged, this, &CaptionPane::UpdateWindowTitle);
     connect(m_targets, &CaptionTargetList::statusChanged, this, &CaptionPane::logLine);
@@ -264,12 +243,77 @@ void CaptionPane::createControls() {
     }
 }
 
+QWidget* CaptionPane::createFormattingBar() {
+    auto* bar = new QWidget(this);
+    bar->setObjectName("captionFormattingBar");
+    bar->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    auto* row = new QHBoxLayout(bar);
+    row->setContentsMargins(8, 4, 8, 4);
+    row->setSpacing(6);
+    const auto combo = [&](const char* name, const QString& label, const QString& accessibleName) {
+        auto* title = new QLabel(label, bar);
+        auto* box = new QComboBox(bar);
+        box->setObjectName(name);
+        box->setAccessibleName(accessibleName);
+        box->setToolTip(accessibleName);
+        box->setFixedHeight(23);
+        title->setBuddy(box);
+        row->addWidget(title);
+        row->addWidget(box);
+        return box;
+    };
+    m_fontCombo = combo("captionFont", tr("Font"), tr("Font"));
+    m_fontCombo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    m_fontCombo->setMinimumContentsLength(13);
+    m_fontCombo->setMinimumWidth(84);
+    m_fontCombo->setMaximumWidth(160);
+    m_fontCombo->addItems(QFontDatabase::families());
+    m_sizeCombo = combo("captionSize", tr("Size"), tr("Font size"));
+    m_sizeCombo->setFixedWidth(52);
+    for (int size : {8, 9, 10, 11, 12, 13, 14, 16, 18, 20, 22, 24, 28, 32, 36, 42, 48})
+        m_sizeCombo->addItem(QString::number(size));
+    m_spacingCombo = combo("captionSpacing", tr("Line spacing"), tr("Line spacing"));
+    m_spacingCombo->setFixedWidth(58);
+    for (double spacing : {1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.75, 2.0, 2.5, 3.0})
+        m_spacingCombo->addItem(QString::number(spacing));
+    row->addStretch();
+    return bar;
+}
+
+QWidget* CaptionPane::createAudioControls(QWidget* toolbar) {
+    auto* group = new QWidget(toolbar);
+    group->setObjectName("windowsAudioControls");
+    group->setAccessibleName(tr("Windows audio levels"));
+    auto* row = new QHBoxLayout(group);
+    row->setContentsMargins(0, 0, 0, 0);
+    row->setSpacing(12);
+    auto* audio = new WindowsAudioLevels;
+    audio->moveToThread(&m_audioThread);
+    connect(&m_audioThread, &QThread::finished, audio, &QObject::deleteLater);
+    connect(this, &CaptionPane::audioMonitoringChanged, audio, &WindowsAudioLevels::setMonitoring);
+    connect(audio, &WindowsAudioLevels::writeFailed, this, [this, group](AudioEndpoint endpoint) {
+        const QString message = endpoint == AudioEndpoint::Microphone
+            ? tr("Windows could not apply the microphone change.") : tr("Windows could not apply the sound output change.");
+        emit logLine(message);
+        if (group->isVisible()) QToolTip::showText(group->mapToGlobal(QPoint()), message, group);
+    });
+    for (auto endpoint : {AudioEndpoint::Microphone, AudioEndpoint::Speakers}) {
+        auto* control = new AudioLevelControl(endpoint, group);
+        row->addWidget(control);
+        connect(audio, &WindowsAudioLevels::levelsChanged, control, &AudioLevelControl::setLevels);
+        connect(control, &AudioLevelControl::volumeRequested, audio, &WindowsAudioLevels::setVolume);
+        connect(control, &AudioLevelControl::muteRequested, audio, &WindowsAudioLevels::setMuted);
+    }
+    m_audioThread.setObjectName("Windows audio levels");
+    m_audioThread.start();
+    return group;
+}
+
 bool CaptionPane::initialize(const Settings& settings) {
     if (m_initialized) return true;
     m_settings = settings;
     m_frame = reinterpret_cast<HWND>(window()->winId());
     if (!m_frame) return false;
-    m_dragStrip->setVisible(!settings.compactView);
     m_pressEnterCheck->setChecked(settings.pressEnter);
     selectValue(m_fontCombo, QString::fromStdWString(settings.fontFamily));
     selectValue(m_sizeCombo, QString::number(settings.fontSizePt));
@@ -280,23 +324,25 @@ bool CaptionPane::initialize(const Settings& settings) {
     qApp->installNativeEventFilter(this);
     m_followTimer.start(10);
     m_initialized = true;
-    m_windowsCaptionsWindowOpen = m_windowsCaptions.windowOpen();
-    ShowWindowsCaptionsState(m_windowsCaptionsWindowOpen);
-    m_windowsCaptionsMonitor.start();
-    if (settings.startWindowsLiveCaptions && !m_windowsCaptionsOn)
-        QTimer::singleShot(0, this, [this] { RequestWindowsCaptions(true); });
     if (!m_engine.Start(this, settings.ResolvedTranscriptPath(), settings.pollIntervalMs, ToSourceChoice(settings.captionSource)))
         SetStatus(L"Could not start caption capture.");
     else SetStatus(L"Saving transcript to " + settings.ResolvedTranscriptPath());
+    UpdateListeningButton();
     return true;
 }
 
 void CaptionPane::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
+    emit audioMonitoringChanged(true);
     if (!m_restoreToolbar || !m_initialized) return;
     layout()->activate();
     restoreToolbarHeight();
     m_restoreToolbar = false;
+}
+
+void CaptionPane::hideEvent(QHideEvent* event) {
+    QWidget::hideEvent(event);
+    emit audioMonitoringChanged(false);
 }
 
 void CaptionPane::resizeEvent(QResizeEvent* event) {
@@ -322,8 +368,7 @@ void CaptionPane::ApplyTheme() {
     m_view->setPalette(palette());
     m_targetSidebar->setStyleSheet(styleSheet());
     m_targetSidebar->setPalette(palette());
-    m_dragStrip->setPalette(palette());
-    m_dragStrip->setAutoFillBackground(true);
+    if (m_pingStatus) caption_theme::apply(m_pingStatus, m_settings.theme);
 }
 
 void CaptionPane::ApplyTypography() {
@@ -355,7 +400,10 @@ bool CaptionPane::event(QEvent* event) {
         return true;
     }
     if (event->type() == CaptionStatus::eventType()) {
-        if (!m_windowPickDrag) SetStatus(static_cast<CaptionStatus*>(event)->text);
+        if (!m_windowsCaptionStartTimer.isActive()) {
+            if (!m_windowPickDrag) SetStatus(static_cast<CaptionStatus*>(event)->text);
+            UpdateListeningButton();
+        }
         return true;
     }
     return QWidget::event(event);
@@ -519,38 +567,53 @@ void CaptionPane::OnClear() {
 }
 
 void CaptionPane::OnToggleListening() {
-    m_engine.SetPaused(!m_engine.IsPaused());
+    if (m_windowsCaptionStartTimer.isActive()) return;
+    if (m_settings.captionSource == CaptionSourcePreference::WindowsLiveCaptions
+        && !m_windowsCaptions.windowOpen()) {
+        m_engine.SetPaused(true);
+        if (!m_windowsCaptions.launch()) {
+            WindowsCaptionStartFailed(tr("Windows Live Captions could not be opened. "
+                                         "Check that Live Captions is available in Windows Settings and try again."));
+            return;
+        }
+        m_windowsCaptionStartTime.start();
+        m_windowsCaptionStartTimer.start();
+        UpdateListeningButton();
+        SetStatus(L"Starting Windows Live Captions\u2026");
+        return;
+    }
+    SetListeningPaused(!m_listenButtonStarts);
+}
+
+void CaptionPane::SetListeningPaused(bool paused) {
+    m_engine.SetPaused(paused);
     UpdateListeningButton();
-    SetStatus(m_engine.IsPaused() ? L"Caption listening stopped. Existing text is preserved."
-                                  : L"Caption listening resumed.");
+    SetStatus(paused ? L"Caption listening stopped. Existing text is preserved."
+                     : L"Caption listening resumed.");
+}
+
+void CaptionPane::WindowsCaptionStartFailed(const QString& message) {
+    m_windowsCaptionStartTimer.stop();
+    UpdateListeningButton();
+    SetStatus(message.toStdWString());
+    auto* warning = new QMessageBox(QMessageBox::Warning, tr("Windows Live Captions"),
+                                    message, QMessageBox::Ok, this);
+    warning->setAttribute(Qt::WA_DeleteOnClose);
+    warning->open();
 }
 
 void CaptionPane::UpdateListeningButton() {
-    const bool paused = m_engine.IsPaused();
-    m_listenButton->setText(QChar(paused ? 0xE768 : 0xE71A));
-    m_listenButton->setAccessibleName(paused ? tr("Resume caption listening") : tr("Stop caption listening"));
-    m_listenButton->setToolTip(m_listenButton->accessibleName());
-}
-
-void CaptionPane::ShowWindowsCaptionsState(bool enabled) {
-    m_windowsCaptionsOn = enabled;
-    m_windowsCaptionsButton->setChecked(enabled);
-    m_windowsCaptionsButton->setEnabled(!m_windowsCaptionsRequest.has_value());
-    QString label;
-    if (m_windowsCaptionsRequest.has_value())
-        label = *m_windowsCaptionsRequest ? tr("Turning on Windows Live Captions…") : tr("Turning off Windows Live Captions…");
-    else
-        label = enabled ? tr("Turn off Windows Live Captions") : tr("Turn on Windows Live Captions");
-    m_windowsCaptionsButton->setAccessibleName(label);
-    m_windowsCaptionsButton->setToolTip(label);
-}
-
-void CaptionPane::RequestWindowsCaptions(bool enabled) {
-    if (m_windowsCaptionsRequest.has_value()) return;
-    m_windowsCaptionsMonitor.stop();
-    m_windowsCaptionsRequest = enabled;
-    ShowWindowsCaptionsState(m_windowsCaptionsOn);
-    m_windowsCaptionsJob.setFuture(QtConcurrent::run(m_windowsCaptions.setEnabled, enabled, m_cancelWindowsCaptions.get_token()));
+    const bool starting = m_windowsCaptionStartTimer.isActive();
+    const bool needsWindows = !starting && m_settings.captionSource == CaptionSourcePreference::WindowsLiveCaptions
+                              && !m_windowsCaptions.windowOpen();
+    m_listenButtonStarts = needsWindows || m_engine.IsPaused();
+    QString action = m_listenButtonStarts ? tr("Resume caption listening") : tr("Stop caption listening");
+    if (starting) action = tr("Starting Windows Live Captions\u2026");
+    else if (needsWindows) action = tr("Start Windows Live Captions and listen");
+    m_listenButton->setEnabled(m_engine.IsRunning() && !starting);
+    m_listenButton->setText(QChar(m_listenButtonStarts ? 0xE768 : 0xE71A));
+    m_listenButton->setAccessibleName(action);
+    m_listenButton->setToolTip(action);
 }
 
 void CaptionPane::OnSettings() {
@@ -560,10 +623,14 @@ void CaptionPane::OnSettings() {
     ApplyTheme();
     UpdateHotkeyRegistration();
     if (previous != m_settings.captionSource) {
+        m_windowsCaptionStartTimer.stop();
         m_engine.Stop();
         discardPendingCaptions();
         m_view->Clear();
-        if (!m_engine.Start(this, m_settings.ResolvedTranscriptPath(), m_settings.pollIntervalMs, ToSourceChoice(m_settings.captionSource))) {
+        const bool started = m_engine.Start(this, m_settings.ResolvedTranscriptPath(), m_settings.pollIntervalMs,
+                                            ToSourceChoice(m_settings.captionSource));
+        UpdateListeningButton();
+        if (!started) {
             SetStatus(L"Could not start caption capture.");
             return;
         }
@@ -593,14 +660,6 @@ bool CaptionPane::eventFilter(QObject* watched, QEvent* event) {
     if (watched == m_targetSidebar && event->type() == QEvent::Wheel) {
         wheelEvent(static_cast<QWheelEvent*>(event));
         return event->isAccepted();
-    }
-    if (watched == m_dragStrip && (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonDblClick)) {
-        if (static_cast<QMouseEvent*>(event)->button() != Qt::LeftButton) return false;
-        if (event->type() == QEvent::MouseButtonDblClick) {
-            if (window()->isMaximized()) window()->showNormal();
-            else window()->showMaximized();
-        } else if (auto* handle = window()->windowHandle()) handle->startSystemMove();
-        return true;
     }
     if (watched != m_pickButton) return false;
     switch (event->type()) {

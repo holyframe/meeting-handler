@@ -1,5 +1,6 @@
 #include "ui/MeetingHandlerWindow.h"
 #include "ui/MeetingControllerPane.h"
+#include "ui/AudioLevelControl.h"
 #include "ui/CaptionPane.h"
 #include "ui/CaptionView.h"
 #include "ui/SettingsDialog.h"
@@ -13,23 +14,37 @@
 #include <QFileDialog>
 #include <QFile>
 #include <QIcon>
+#include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPointer>
+#include <QProgressBar>
 #include <QPushButton>
-#include <QScopeGuard>
 #include <QSettings>
+#include <QSignalSpy>
+#include <QSlider>
 #include <QSplitter>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
 #include <QToolButton>
-#include <atomic>
 
 namespace {
 QRect boundsIn(QWidget* widget, QWidget* parent) {
     return {widget->mapTo(parent, QPoint()), widget->size()};
+}
+
+void verifyControlsFit(QWidget* bar, std::initializer_list<const char*> names) {
+    QList<QRect> seen;
+    for (const auto* name : names) {
+        auto* control = bar->findChild<QWidget*>(name);
+        QVERIFY2(control && control->isVisible(), name);
+        const QRect rect = boundsIn(control, bar);
+        QVERIFY2(!rect.isEmpty() && bar->rect().contains(rect), name);
+        for (const auto& other : seen) QVERIFY2(!rect.intersects(other), name);
+        seen.append(rect);
+    }
 }
 
 void verifyColumnsFit(QWidget* workspace) {
@@ -51,117 +66,231 @@ void verifyColumnsFit(QWidget* workspace) {
     QCOMPARE(controller->height(), columns->height());
     QCOMPARE(captions->height(), columns->height());
     auto* view = captions->findChild<CaptionView*>();
+    auto* formatting = captions->findChild<QWidget*>("captionFormattingBar");
     auto* toolbar = captions->findChild<QWidget*>("captionToolbar");
-    QVERIFY(view && toolbar);
-    QCOMPARE(boundsIn(view, captions).topLeft(), QPoint());
+    QVERIFY(view && formatting && toolbar);
+    QCOMPARE(boundsIn(formatting, captions).topLeft(), QPoint());
+    QCOMPARE(formatting->width(), captions->width());
+    QCOMPARE(boundsIn(view, captions).topLeft(), QPoint(0, formatting->height()));
     QCOMPARE(boundsIn(view, captions).right(), captions->rect().right());
     QCOMPARE(boundsIn(toolbar, captions).bottom(), captions->rect().bottom());
-    QList<QRect> controls;
-    for (auto name : {"sendCaption", "pressEnter", "toggleListening", "toggleWindowsCaptions", "saveCaptions", "clearCaptions",
-                      "captionPreferences", "toggleActivityLog", "captionFont", "captionSize", "captionSpacing"}) {
-        auto* control = toolbar->findChild<QWidget*>(name);
-        QVERIFY2(control && control->isVisible(), name);
-        const auto rect = boundsIn(control, toolbar);
-        if (!toolbar->rect().contains(rect))
-            qInfo() << name << rect << "toolbar" << toolbar->rect() << "columns" << columns->sizes() << "caption minimum" << captions->minimumWidth();
-        QVERIFY2(toolbar->rect().contains(rect), name);
-        for (const auto& other : controls) QVERIFY2(!rect.intersects(other), name);
-        controls.append(rect);
-    }
+    verifyControlsFit(formatting, {"captionFont", "captionSize", "captionSpacing"});
+    verifyControlsFit(toolbar, {"sendCaption", "pressEnter", "toggleListening", "saveCaptions", "clearCaptions",
+                                "captionPreferences", "toggleActivityLog", "microphoneMute", "microphoneVolume",
+                                "microphonePeak", "microphonePercent", "speakerMute", "speakerVolume",
+                                "speakerPeak", "speakerPercent"});
 }
 }
 
 class WorkspaceTests : public QObject {
     Q_OBJECT
 private slots:
-    void windowsCaptionsButtonAndStartup_data() {
-        QTest::addColumn<bool>("initiallyOn");
-        QTest::addColumn<bool>("startAutomatically");
-        QTest::newRow("manual-off") << false << false;
-        QTest::newRow("manual-already-on") << true << false;
-        QTest::newRow("automatic-off") << false << true;
-        QTest::newRow("automatic-already-on") << true << true;
+    void windowsMuteIcon_data() {
+        QTest::addColumn<AudioEndpoint>("endpoint");
+        QTest::newRow("microphone") << AudioEndpoint::Microphone;
+        QTest::newRow("sound") << AudioEndpoint::Speakers;
     }
 
-    void windowsCaptionsButtonAndStartup() {
-        QFETCH(bool, initiallyOn);
-        QFETCH(bool, startAutomatically);
-        std::atomic<bool> state{initiallyOn};
-        std::atomic<int> requests{0};
-        windows_captions::Backend backend{
-            [&] { return state.load(); },
-            [&](bool desired, std::stop_token) {
-                ++requests;
-                state = desired;
-                return windows_captions::Result{desired, {}};
-            }};
-        QTemporaryDir temp;
-        QVERIFY(temp.isValid());
-        Settings settings;
-        settings.startWindowsLiveCaptions = startAutomatically;
-        settings.transcriptPath = temp.filePath("captions.txt").toStdWString();
-        settings.hotkeyVirtualKey = 0;
-        QWidget owner, sidebar, strip;
-        CaptionPane pane(&sidebar, &strip, &owner, backend);
-        auto* listen = pane.findChild<QToolButton*>("toggleListening");
-        auto* system = pane.findChild<QToolButton*>("toggleWindowsCaptions");
-        QVERIFY(listen && system);
-        listen->click();
-        QVERIFY(pane.initialize(settings));
-        const bool expectedOn = initiallyOn || startAutomatically;
-        const int startupRequests = startAutomatically && !initiallyOn ? 1 : 0;
-        QCoreApplication::processEvents();
-        QTRY_COMPARE(requests.load(), startupRequests);
-        QTRY_VERIFY(system->isEnabled() && system->isChecked() == expectedOn);
-        QCOMPARE(state.load(), expectedOn);
-        for (bool desired : {!expectedOn, expectedOn}) {
-            system->click();
-            QVERIFY(!system->isEnabled());
-            system->click();
-            QTRY_VERIFY(system->isEnabled());
-            QCOMPARE(system->isChecked(), desired);
-            QCOMPARE(state.load(), desired);
-            QCOMPARE(listen->accessibleName(), "Resume caption listening");
-        }
-        QCOMPARE(requests.load(), startupRequests + 2);
-        state = !expectedOn;
-        QTRY_COMPARE(system->isChecked(), !expectedOn);
-        QCOMPARE(requests.load(), startupRequests + 2);
-    }
+    void windowsMuteIcon() {
+        QFETCH(AudioEndpoint, endpoint);
+        const bool mic = endpoint == AudioEndpoint::Microphone;
+        AudioLevelControl control(endpoint, nullptr);
+        auto* button = control.findChild<QToolButton*>(mic ? "microphoneMute" : "speakerMute");
+        auto* slider = control.findChild<QSlider*>();
+        QVERIFY(button && slider);
+        QSignalSpy requests(&control, &AudioLevelControl::muteRequested);
+        QSignalSpy volumeWrites(&control, &AudioLevelControl::volumeRequested);
+        QVERIFY(button->isCheckable() && !button->isEnabled());
+        control.setLevels(mic ? AudioEndpoint::Speakers : AudioEndpoint::Microphone, {"other", 90, 0, true});
+        QVERIFY(!button->isEnabled());
 
-    void liveWindowsCaptionSwitch() {
-        if (qEnvironmentVariableIntValue("MEETING_HANDLER_TEST_LIVE_CAPTIONS") != 1)
-            QSKIP("Enable this desktop integration test explicitly to operate the Windows setting.");
-        auto native = windows_captions::systemBackend();
-        if (native.windowOpen()) QSKIP("Windows Live Captions is already in use.");
-        const auto restore = qScopeGuard([&] {
-            if (native.windowOpen()) native.setEnabled(false, {});
-        });
-        QTemporaryDir temp;
-        QVERIFY(temp.isValid());
-        Settings settings;
-        settings.startWindowsLiveCaptions = true;
-        settings.hotkeyVirtualKey = 0;
-        settings.transcriptPath = temp.filePath("captions.txt").toStdWString();
-        QWidget owner, sidebar, strip;
-        CaptionPane pane(&sidebar, &strip, &owner);
-        QString lastStatus;
-        connect(&pane, &CaptionPane::logLine, &pane, [&](const QString& line) {
-            lastStatus = line;
-            qInfo().noquote() << line;
-        });
-        // Pause the transcript before initializing so the live test never reads desktop captions.
-        pane.findChild<QToolButton*>("toggleListening")->click();
-        auto* button = pane.findChild<QToolButton*>("toggleWindowsCaptions");
-        QVERIFY(pane.initialize(settings));
-        QCoreApplication::processEvents();
-        QTRY_VERIFY_WITH_TIMEOUT(button->isEnabled() || pane.window()->findChild<QMessageBox*>(), 18000);
-        QVERIFY2(button->isChecked(), qPrintable(lastStatus));
-        QTRY_VERIFY_WITH_TIMEOUT(native.windowOpen(), 10000);
+        control.setLevels(endpoint, {"device A", 55, 10, false});
+        control.show();
+        QVERIFY(button->isEnabled() && !button->isChecked());
+        const QString onGlyph = button->text();
+        QCOMPARE(onGlyph.size(), 1);
+        QVERIFY(button->fontMetrics().inFont(onGlyph.front()));
+        QCOMPARE(button->accessibleName(), mic ? "Mute Windows microphone" : "Mute Windows sound");
+        QTest::mouseClick(button, Qt::LeftButton);
+        QCOMPARE(requests.size(), 1);
+        const auto mute = requests.takeFirst();
+        QCOMPARE(mute.at(0).value<AudioEndpoint>(), endpoint);
+        QCOMPARE(mute.at(1).toString(), "device A");
+        QCOMPARE(mute.at(2).toBool(), true);
+        QVERIFY(!button->isChecked());
+
+        control.setLevels(endpoint, {"device A", 55, 0, true});
+        QVERIFY(button->isChecked());
+        QVERIFY(button->text() != onGlyph && button->fontMetrics().inFont(button->text().front()));
+        QCOMPARE(button->accessibleName(), mic ? "Unmute Windows microphone" : "Unmute Windows sound");
+        QCOMPARE(slider->value(), 55);
+        QVERIFY(requests.isEmpty());
+        QTest::keyClick(button, Qt::Key_Space);
+        QCOMPARE(requests.size(), 1);
+        QCOMPARE(requests.takeFirst().at(2).toBool(), false);
+        control.setLevels(endpoint, {"device A", 55, 4, false});
+        QCOMPARE(button->text(), onGlyph);
+
+        QTest::mousePress(button, Qt::LeftButton);
+        QVERIFY(button->isDown());
+        control.setLevels(endpoint, {"device B", 32, 4, false});
+        QTest::mouseRelease(button, Qt::LeftButton);
+        QVERIFY(requests.isEmpty());
+        control.setLevels(endpoint, {"device B", 32, 0, std::nullopt});
+        QVERIFY(!button->isEnabled() && slider->isEnabled());
         button->click();
-        QTRY_VERIFY_WITH_TIMEOUT(button->isEnabled() || pane.window()->findChild<QMessageBox*>(), 18000);
-        QVERIFY2(!button->isChecked(), qPrintable(lastStatus));
-        QTRY_VERIFY_WITH_TIMEOUT(!native.windowOpen(), 10000);
+        QVERIFY(requests.isEmpty() && volumeWrites.isEmpty());
+    }
+
+    void audioControlsFollowWindowsWithoutWritingOnRefresh() {
+        QWidget owner;
+        AudioLevelControl mic(AudioEndpoint::Microphone, &owner);
+        AudioLevelControl speakers(AudioEndpoint::Speakers, &owner);
+        auto* input = mic.findChild<QSlider*>("microphoneVolume");
+        auto* output = speakers.findChild<QSlider*>("speakerVolume");
+        auto* meter = mic.findChild<QProgressBar*>("microphonePeak");
+        auto* percent = mic.findChild<QLabel*>("microphonePercent");
+        QVERIFY(input && output && meter && percent);
+        QSignalSpy inputWrites(&mic, &AudioLevelControl::volumeRequested);
+        QSignalSpy outputWrites(&speakers, &AudioLevelControl::volumeRequested);
+        QVERIFY(!input->isEnabled() && !output->isEnabled());
+        QCOMPARE(percent->text(), QStringLiteral("—"));
+        const auto update = [&](AudioEndpoint kind, const AudioLevels& levels) {
+            mic.setLevels(kind, levels);
+            speakers.setLevels(kind, levels);
+        };
+        update(AudioEndpoint::Microphone, {"mic A", 63, 24, false});
+        update(AudioEndpoint::Speakers, {"output A", 31, 0, true});
+        QVERIFY(input->isEnabled() && output->isEnabled());
+        QCOMPARE(input->value(), 63);
+        QCOMPARE(output->value(), 31);
+        QCOMPARE(meter->value(), 24);
+        QVERIFY(inputWrites.isEmpty() && outputWrites.isEmpty());
+
+        QTest::keyClick(input, Qt::Key_Right);
+        QCOMPARE(inputWrites.count(), 1);
+        const auto write = inputWrites.takeFirst();
+        QCOMPARE(write.at(0).value<AudioEndpoint>(), AudioEndpoint::Microphone);
+        QCOMPARE(write.at(1).toString(), "mic A");
+        QCOMPARE(write.at(2).toInt(), 64);
+        update(AudioEndpoint::Microphone, {"mic A", 64, 79, false});
+        QCOMPARE(percent->text(), "64%");
+        QCOMPARE(meter->value(), 79);
+        QVERIFY(inputWrites.isEmpty() && outputWrites.isEmpty());
+
+        output->setSliderDown(true);
+        output->setSliderPosition(37);
+        output->setSliderDown(false);
+        QCOMPARE(outputWrites.count(), 1);
+        const auto outputWrite = outputWrites.takeFirst();
+        QCOMPARE(outputWrite.at(0).value<AudioEndpoint>(), AudioEndpoint::Speakers);
+        QCOMPARE(outputWrite.at(1).toString(), "output A");
+        QCOMPARE(outputWrite.at(2).toInt(), 37);
+        input->setSliderDown(true);
+        input->setSliderPosition(89);
+        update(AudioEndpoint::Microphone, {"mic B", 18, std::nullopt, false});
+        input->setSliderDown(false);
+        QCOMPARE(input->value(), 18);
+        QVERIFY(!meter->isEnabled());
+        QVERIFY(inputWrites.isEmpty());
+        update(AudioEndpoint::Microphone, {});
+        QVERIFY(!input->isEnabled() && output->isEnabled());
+        QCOMPARE(percent->text(), QStringLiteral("—"));
+        QVERIFY(inputWrites.isEmpty() && outputWrites.isEmpty());
+    }
+
+    void listeningStartsWindowsCaptionsOnce() {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        Settings settings;
+        settings.captionSource = CaptionSourcePreference::WindowsLiveCaptions;
+        settings.transcriptPath = temp.filePath("captions.txt").toStdWString();
+        settings.hotkeyVirtualKey = 0;
+        bool windowOpen = false;
+        int launches = 0;
+        QWidget owner, sidebar(&owner), strip(&owner);
+        CaptionPane pane(&sidebar, &strip, &owner, {
+            [&] { return windowOpen; }, [&] { ++launches; return true; }
+        });
+        QVERIFY(pane.initialize(settings));
+        auto* listen = pane.findChild<QToolButton*>("toggleListening");
+        auto* view = pane.findChild<CaptionView*>();
+        QVERIFY(listen && view);
+        QCOMPARE(launches, 0);
+        QCOMPARE(listen->accessibleName(), "Start Windows Live Captions and listen");
+        listen->click();
+        QCOMPARE(launches, 1);
+        QVERIFY(!listen->isEnabled());
+        listen->click();
+        QTest::qWait(350);
+        QCOMPARE(launches, 1);
+        QVERIFY(!listen->isEnabled());
+
+        windowOpen = true;
+        QTRY_COMPARE(listen->accessibleName(), "Stop caption listening");
+        QVERIFY(listen->isEnabled());
+        listen->click();
+        QCOMPARE(listen->accessibleName(), "Resume caption listening");
+        QCoreApplication::postEvent(&pane, new CaptionUpdate(0, {L"Existing caption"}));
+        QTRY_VERIFY(!view->Empty());
+        listen->click();
+        QCOMPARE(listen->accessibleName(), "Stop caption listening");
+        QCOMPARE(QString::fromStdWString(view->FullText()), QStringLiteral("Existing caption\r\n"));
+        QCOMPARE(launches, 1);
+    }
+
+    void failedWindowsStartCanRetryAndSwitchToChrome() {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        Settings settings;
+        settings.captionSource = CaptionSourcePreference::WindowsLiveCaptions;
+        settings.transcriptPath = temp.filePath("captions.txt").toStdWString();
+        settings.hotkeyVirtualKey = 0;
+        int launches = 0;
+        int windowChecks = 0;
+        bool windowOpen = false;
+        QWidget owner, sidebar(&owner), strip(&owner);
+        CaptionPane pane(&sidebar, &strip, &owner, {
+            [&] { ++windowChecks; return windowOpen; }, [&] { return ++launches > 1; }
+        });
+        QVERIFY(pane.initialize(settings));
+        auto* listen = pane.findChild<QToolButton*>("toggleListening");
+        auto* preferences = pane.findChild<QToolButton*>("captionPreferences");
+        QVERIFY(listen && preferences);
+        listen->click();
+        auto* warning = pane.findChild<QMessageBox*>();
+        QVERIFY(warning && warning->isVisible());
+        QVERIFY(listen->isEnabled());
+        QCOMPARE(listen->accessibleName(), "Start Windows Live Captions and listen");
+        warning->accept();
+        listen->click();
+        QCOMPARE(launches, 2);
+        QVERIFY(!listen->isEnabled());
+
+        bool choseChrome = false;
+        QTimer::singleShot(0, &pane, [&] {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            if (!dialog) return;
+            auto* source = dialog->findChild<QComboBox*>("captionSource");
+            if (source) {
+                source->setCurrentText("Chrome Live Caption");
+                choseChrome = source->currentIndex() == 1;
+            }
+            dialog->accept();
+        });
+        preferences->click();
+        QVERIFY(choseChrome);
+        const int checksBeforeChrome = windowChecks;
+        windowOpen = true;
+        QTest::qWait(350);
+        QVERIFY(listen->isEnabled());
+        QCOMPARE(listen->accessibleName(), "Resume caption listening");
+        listen->click();
+        QCOMPARE(listen->accessibleName(), "Stop caption listening");
+        listen->click();
+        QCOMPARE(listen->accessibleName(), "Resume caption listening");
+        QCOMPARE(launches, 2);
+        QCOMPARE(windowChecks, checksBeforeChrome);
     }
 
     void captionDialogSettingsAndSave() {
@@ -180,10 +309,8 @@ private slots:
                 auto* source = dialog->findChild<QComboBox*>("captionSource");
                 auto* theme = dialog->findChild<QComboBox*>("captionTheme");
                 auto* hotkey = dialog->findChild<QLineEdit*>("sendHotkey");
-                auto* startup = dialog->findChild<QCheckBox*>("startWindowsLiveCaptions");
-                fieldsFound = source && theme && hotkey && startup;
+                fieldsFound = source && theme && hotkey;
                 if (fieldsFound) {
-                    startup->setChecked(true);
                     source->setCurrentIndex(1);
                     theme->setCurrentIndex(1);
                     QTest::keyClick(hotkey, Qt::Key_F8, Qt::ControlModifier | Qt::AltModifier);
@@ -195,19 +322,13 @@ private slots:
         };
         QVERIFY(!editSettings(false));
         QVERIFY(fieldsFound);
-        QVERIFY(!settings.startWindowsLiveCaptions);
         QCOMPARE(settings.theme, UiTheme::Dark);
         QCOMPARE(settings.hotkeyVirtualKey, 0U);
         QVERIFY(editSettings(true));
-        QVERIFY(settings.startWindowsLiveCaptions);
         settings.Save();
         Settings savedSettings;
         savedSettings.Load();
-        QVERIFY(savedSettings.startWindowsLiveCaptions);
-        settings.startWindowsLiveCaptions = false;
-        settings.Save();
-        savedSettings.Load();
-        QVERIFY(!savedSettings.startWindowsLiveCaptions);
+        QCOMPARE(savedSettings.captionSource, CaptionSourcePreference::ChromeLiveCaption);
         QCOMPARE(settings.theme, UiTheme::Light);
         QCOMPARE(settings.captionSource, CaptionSourcePreference::ChromeLiveCaption);
         QCOMPARE(settings.hotkeyVirtualKey, unsigned(VK_F8));
@@ -263,6 +384,7 @@ private slots:
         QVERIFY(temp.isValid());
         QSettings layout(temp.filePath("layout.ini"), QSettings::IniFormat);
         Settings settings;
+        settings.captionSource = CaptionSourcePreference::ChromeLiveCaption;
         settings.transcriptPath = temp.filePath("captions.txt").toStdWString();
         settings.hotkeyVirtualKey = 0;
         settings.sidePanelWidth = 273;
@@ -326,7 +448,10 @@ private slots:
             auto* spacing = captions->findChild<QComboBox*>("captionSpacing");
             QVERIFY(spacing);
             spacing->setFocus();
-            for (int i = 0; i < 5 && !controller->isAncestorOf(QApplication::focusWidget()); ++i)
+            QTest::keyClick(spacing, Qt::Key_Tab);
+            QCOMPARE(QApplication::focusWidget(), view);
+            toggleLog->setFocus();
+            for (int i = 0; i < 12 && !controller->isAncestorOf(QApplication::focusWidget()); ++i)
                 QTest::keyClick(QApplication::focusWidget(), Qt::Key_Tab);
             QVERIFY(controller->isAncestorOf(QApplication::focusWidget()));
 
@@ -383,7 +508,10 @@ private slots:
             columns->setSizes({950, 324, 100});
             QCoreApplication::processEvents();
             verifyColumnsFit(workspace);
-            QVERIFY(boundsIn(spacing, captions).top() > boundsIn(send, captions).bottom());
+            auto* mic = captions->findChild<QSlider*>("microphoneVolume");
+            QVERIFY(mic);
+            QVERIFY(boundsIn(mic, captions).top() > boundsIn(send, captions).bottom());
+            QVERIFY(boundsIn(spacing, captions).bottom() < boundsIn(view, captions).top());
 
             window.resize(expandedWindow);
             const int available = columns->width() - 2 * columns->handleWidth();

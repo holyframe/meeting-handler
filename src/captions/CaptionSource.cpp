@@ -304,6 +304,20 @@ bool CaptionSource::WindowsLiveCaptionsWindowOpen() {
     return FindCaptionWindow(CaptionSourceChoice::WindowsLiveCaptions).hwnd != nullptr;
 }
 
+bool CaptionSource::LaunchWindowsLiveCaptions() {
+    const auto executable = util::SystemExecutablePath(L"LiveCaptions.exe");
+    if (executable.empty()) return false;
+
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    if (!::CreateProcessW(executable.c_str(), nullptr, nullptr, nullptr, FALSE, 0,
+                          nullptr, nullptr, &startup, &process)) return false;
+    ::CloseHandle(process.hThread);
+    ::CloseHandle(process.hProcess);
+    return true;
+}
+
 bool CaptionSource::Attach(CaptionSourceChoice choice) {
     if (!m_automation && !Initialize()) return false;
 

@@ -2,19 +2,21 @@
 
 #include <QAbstractNativeEventFilter>
 #include <QElapsedTimer>
-#include <QFutureWatcher>
 #include <QPointer>
+#include <QThread>
 #include <QTimer>
 #include <QWidget>
+
+#include <functional>
 
 #include "captions/CaptureEngine.h"
 #include "captions/Settings.h"
 #include "windows/ActiveWindowFollower.h"
 #include "windows/WebInputPicker.h"
-#include "windows/WindowsLiveCaptions.h"
 
 class CaptionTargetList;
 class CaptionView;
+class PingStatusDialog;
 class QBoxLayout;
 class QCheckBox;
 class QComboBox;
@@ -24,8 +26,13 @@ class QToolButton;
 class CaptionPane final : public QWidget, private QAbstractNativeEventFilter {
     Q_OBJECT
 public:
-    CaptionPane(QWidget* targetSidebar, QWidget* dragStrip, QWidget* parent,
-                windows_captions::Backend windowsCaptions = windows_captions::systemBackend());
+    struct WindowsCaptionLauncher {
+        std::function<bool()> windowOpen = CaptionSource::WindowsLiveCaptionsWindowOpen;
+        std::function<bool()> launch = CaptionSource::LaunchWindowsLiveCaptions;
+    };
+    CaptionPane(QWidget* targetSidebar, QWidget* parent, WindowsCaptionLauncher windowsCaptions);
+    CaptionPane(QWidget* targetSidebar, QWidget* parent)
+        : CaptionPane(targetSidebar, parent, {}) {}
     ~CaptionPane() override;
     bool initialize(const Settings& settings);
     void setLogVisible(bool visible);
@@ -34,18 +41,22 @@ public:
 signals:
     void logLine(const QString& text);
     void logToggled(bool visible);
+    void audioMonitoringChanged(bool enabled);
 
 protected:
     bool event(QEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
     bool nativeEventFilter(const QByteArray& type, void* message, qintptr* result) override;
     void keyPressEvent(QKeyEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void showEvent(QShowEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
 
 private:
     void createControls();
+    QWidget* createFormattingBar();
+    QWidget* createAudioControls(QWidget* toolbar);
     void restoreToolbarHeight();
     void ApplyTheme();
     void ApplyTypography();
@@ -58,9 +69,9 @@ private:
     void OnSave();
     void OnClear();
     void OnToggleListening();
+    void SetListeningPaused(bool paused);
+    void WindowsCaptionStartFailed(const QString& message);
     void UpdateListeningButton();
-    void RequestWindowsCaptions(bool enabled);
-    void ShowWindowsCaptionsState(bool enabled);
     void OnSettings();
     void OnCopy();
     void MaybeCopyRealtime();
@@ -74,6 +85,10 @@ private:
     WebInputPicker m_webInputPicker;
     CaptureEngine m_engine;
     Settings m_settings;
+    WindowsCaptionLauncher m_windowsCaptions;
+    QTimer m_windowsCaptionStartTimer;
+    QElapsedTimer m_windowsCaptionStartTime;
+    bool m_listenButtonStarts = false;
     ActiveWindowFollower m_activeWindowFollower;
     HWND m_frame = nullptr;
     bool m_initialized = false;
@@ -83,25 +98,18 @@ private:
     bool m_windowPickUpdating = false;
     WebInputPickState m_windowPickState = WebInputPickState::NoWindow;
     QTimer m_followTimer, m_pickTimer, m_hotkeyTimer, m_presentTimer;
-    windows_captions::Backend m_windowsCaptions;
-    QFutureWatcher<windows_captions::Result> m_windowsCaptionsJob;
-    std::stop_source m_cancelWindowsCaptions;
-    QTimer m_windowsCaptionsMonitor;
-    std::optional<bool> m_windowsCaptionsRequest;
-    bool m_windowsCaptionsOn = false;
-    bool m_windowsCaptionsWindowOpen = false;
     QElapsedTimer m_realtimeCopy;
-    QWidget* m_dragStrip = nullptr;
+    PingStatusDialog* m_pingStatus = nullptr;
     QWidget* m_pickOutline = nullptr;
     QWidget* m_targetSidebar = nullptr;
     QBoxLayout* m_toolbarGroups = nullptr;
+    QThread m_audioThread;
     QSplitter* m_rows = nullptr;
     CaptionView* m_view = nullptr;
     QPointer<CaptionTargetList> m_targets;
     QCheckBox* m_pressEnterCheck = nullptr;
     QPointer<QToolButton> m_pickButton;
     QToolButton* m_listenButton = nullptr;
-    QToolButton* m_windowsCaptionsButton = nullptr;
     QToolButton* m_logButton = nullptr;
     QComboBox* m_fontCombo = nullptr;
     QComboBox* m_sizeCombo = nullptr;

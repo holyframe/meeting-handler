@@ -16,7 +16,6 @@ enum class UiTheme {
 // Simple INI-backed preferences stored next to the executable.
 struct Settings {
     CaptionSourcePreference captionSource = CaptionSourcePreference::WindowsLiveCaptions;
-    bool startWindowsLiveCaptions = false;
     UiTheme      theme        = UiTheme::Dark;
     std::wstring fontFamily   = L"Segoe UI";
     int          fontSizePt   = 12;

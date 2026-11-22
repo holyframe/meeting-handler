@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
-find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Svg Concurrent)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Svg)
 
 add_compile_definitions(UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX WINVER=0x0A00 _WIN32_WINNT=0x0A00)
 if(MSVC)
@@ -17,7 +17,9 @@ endif()
 
 # The executable and the regression tests link the same application code.
 add_library(meeting_handler_core STATIC
+    src/ui/AudioLevelControl.cpp
     src/ui/MeetingHandlerWindow.cpp
+    src/ui/PingStatusDialog.cpp
     src/ui/CaptionPane.cpp
     src/ui/CaptionTheme.cpp
     src/ui/CaptionTargetList.cpp
@@ -42,14 +44,14 @@ add_library(meeting_handler_core STATIC
     src/windows/UiaSupport.cpp
     src/windows/UiaTreeInspector.cpp
     src/windows/UiaWorker.cpp
-    src/windows/WindowsLiveCaptions.cpp
     src/windows/WebInputPicker.cpp
+    src/windows/WindowsAudioLevels.cpp
 )
 set_target_properties(meeting_handler_core PROPERTIES AUTOMOC ON)
 target_include_directories(meeting_handler_core PUBLIC src resources)
 target_link_libraries(meeting_handler_core
     PUBLIC Qt6::Widgets
-    PRIVATE Qt6::Concurrent advapi32 dwmapi ole32 oleaut32 shell32 uiautomationcore user32 uuid
+    PRIVATE advapi32 dwmapi ole32 oleaut32 shell32 uiautomationcore user32 uuid
 )
 qt_add_resources(meeting_handler_core application_assets
     PREFIX "/"
