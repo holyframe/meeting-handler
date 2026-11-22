@@ -1,4 +1,5 @@
 #include "ui/MeetingControllerPane.h"
+#include "ui/MeetingAudioSummary.h"
 #include "windows/UiaWorker.h"
 #include "meetings/ZoomAudioState.h"
 
@@ -105,12 +106,12 @@ class MeetingControllerTests : public QObject
 private slots:
     void initTestCase()
     {
-        // The offscreen plugin has no Windows font discovery. Load the same
-        // installed family the real Windows dashboard uses for visual checks.
+        // The offscreen plugin has no Windows font discovery.
         const QString fonts = qEnvironmentVariable("WINDIR") + "/Fonts/";
         QVERIFY(QFontDatabase::addApplicationFont(fonts + "segoeui.ttf") >= 0);
         QVERIFY(QFontDatabase::addApplicationFont(fonts + "segoeuib.ttf") >= 0);
         QVERIFY(QFontDatabase::addApplicationFont(fonts + "seguisb.ttf") >= 0);
+        QFontDatabase::addApplicationFont(fonts + "seguisym.ttf");
     }
 
     void recognizesAudioControls_data()
@@ -473,6 +474,8 @@ private slots:
         QCOMPARE(spy.at(0).at(3).toBool(), false);
         QCOMPARE(spy.at(0).at(4).toString(), window.meetings_.first().key());
         QVERIFY(window.meetingBusy_);
+        QVERIFY(!window.dashboardMuteAllButton_->isEnabled());
+        QVERIFY(!window.dashboardSoundOffButton_->isEnabled());
         QVERIFY(!window.meetingCards_.first()->findChild<QPushButton*>("soundButton")->isEnabled());
         window.setSound(window.meetings_.first().key(), false);
         QCOMPARE(spy.count(), 1);
@@ -553,7 +556,8 @@ private slots:
         QCOMPARE(window.meetingCards_.first()->objectName(), QString("meetingCardActive"));
         QCOMPARE(window.meetingCountValue_->text(), QString("1/1"));
         QCOMPARE(window.meetingCards_.first()->findChild<QPushButton*>("soundButton")->text(), "Sound On");
-        QCOMPARE(window.meetingCards_.first()->findChild<QLabel*>("soundState")->text(), "Sound off");
+        QCOMPARE(window.audioSummary_->item(0, 1)->text(), "Disconnected");
+        QCOMPARE(window.audioSummary_->item(0, 2)->text(), "Off");
     }
 
     void missingJoinButtonShowsErrorAndKeepsVerifiedSoundOff()
@@ -620,6 +624,7 @@ private slots:
         edit->setText("  Standup  ");
         emit edit->editingFinished();
         QCOMPARE(window.meetings_.first().title, QString("Standup"));
+        QCOMPARE(window.audioSummary_->item(0, 0)->text(), "Standup");
         QCOMPARE(window.meetings_.first().chromeTabName, QString("Audio test meeting"));
         QCOMPARE(window.meetings_.first().automationName(), QString("Audio test meeting"));
     }
@@ -627,16 +632,29 @@ private slots:
     void reordersMeetingsByDragTarget()
     {
         MeetingControllerPane window;
+        QVERIFY(window.audioSummary_->isHidden());
         populate(window, ManagedMeeting::Sound::On, ManagedMeeting::Microphone::Muted);
         auto second = window.meetings_.first();
         second.tabRuntimeId = "second-tab";
         second.title = "Second meeting";
         second.chromeTabName = "Second meeting";
+        second.microphone = ManagedMeeting::Microphone::AudioNotConnected;
+        second.sound = ManagedMeeting::Sound::Off;
         window.meetings_.append(second);
         window.refreshMeetingCards();
         window.moveMeeting(second.key(), window.meetings_.first().key());
         QCOMPARE(window.meetings_.first().title, QString("Second meeting"));
         QCOMPARE(window.meetings_.last().title, QString("Audio test meeting"));
+        QCOMPARE(window.audioSummary_->item(0, 0)->text(), second.title);
+        QCOMPARE(window.audioSummary_->item(0, 1)->text(), "Disconnected");
+        QCOMPARE(window.audioSummary_->item(1, 1)->text(), "Muted");
+        window.removeMeeting(second.key());
+        QCOMPARE(window.audioSummary_->rowCount(), 1);
+        QCOMPARE(window.audioSummary_->item(0, 0)->text(), "Audio test meeting");
+        QCOMPARE(window.audioSummary_->item(0, 2)->text(), "On");
+        window.removeMeeting(window.meetings_.first().key());
+        QCOMPARE(window.audioSummary_->rowCount(), 0);
+        QVERIFY(window.audioSummary_->isHidden());
     }
 
     void refreshChecksEveryMeetingConnection()
@@ -659,8 +677,10 @@ private slots:
             QVERIFY(window.meetingBusy_);
             QCOMPARE(window.meetingCountValue_->text(), "1/2");
             QCOMPARE(window.meetingCards_.first()->property("meetingKey").toString(), "1234/resolved-tab");
-            QCOMPARE(window.meetingCards_.first()->findChild<QLabel*>("soundState")->text(), "Sound on");
+            QCOMPARE(window.audioSummary_->item(0, 1)->text(), "Muted");
+            QCOMPARE(window.audioSummary_->item(0, 2)->text(), "On");
             QCOMPARE(window.meetingCards_.at(1), secondCard);
+            QCOMPARE(window.audioSummary_->item(1, 2)->text(), "Unknown");
             QCOMPARE(window.meetings_.at(1).sound, ManagedMeeting::Sound::Unknown);
         });
         window.uiaRefreshButton_->click();
@@ -694,6 +714,7 @@ private slots:
         QFETCH(bool, mute);
         MeetingControllerPane window;
         populate(window, ManagedMeeting::Sound::On, ManagedMeeting::Microphone::Unmuted);
+        QCOMPARE(window.audioSummary_->item(0, 1)->text(), "Unmuted");
         auto next = window.meetings_.first();
         next.tabRuntimeId = "already";
         next.microphone = ManagedMeeting::Microphone::Muted;
@@ -898,7 +919,6 @@ private slots:
             window.meetings_.append(meeting);
         }
         window.refreshMeetingCards();
-        window.resize(1500, 720);
         window.show();
         const auto lastCell = [&window] {
             const int item = window.meetingsLayout_->indexOf(window.meetingCards_.last());
@@ -907,47 +927,60 @@ private slots:
             window.meetingsLayout_->getItemPosition(item, &row, &column, &rowSpan, &columnSpan);
             return QPoint(column, row);
         };
-        QTRY_COMPARE(lastCell(), QPoint(0, 3));
-        QTRY_COMPARE(window.meetingsArea_->horizontalScrollBar()->maximum(), 0);
-        window.resize(window.minimumWidth(), 720);
-        QTRY_COMPARE(window.width(), window.minimumWidth());
         const auto bounds = [&window](QWidget* widget) {
             return QRect(widget->mapTo(&window, QPoint()), widget->size());
         };
-        QTRY_VERIFY(bounds(window.dashboardPickUpButton_).bottom() <= bounds(window.dashboardMuteAllButton_).top());
-        QTRY_VERIFY(bounds(window.dashboardPickUpButton_).bottom() <= bounds(window.dashboardSoundOffButton_).top());
-        QVERIFY(bounds(window.dashboardMuteAllButton_).top() <= bounds(window.dashboardSoundOffButton_).top());
-        QVERIFY(bounds(window.uiaRefreshButton_).bottom() <= bounds(window.dashboardMuteAllButton_).top());
-        QVERIFY(bounds(window.dashboardPickUpButton_).left() > bounds(window.collapseButton_).left());
-        QVERIFY(bounds(window.uiaRefreshButton_).left() > bounds(window.dashboardPickUpButton_).left());
-        QCOMPARE(bounds(window.uiaRefreshButton_).width(), bounds(window.uiaRefreshButton_).height());
-        for (auto* button : {window.dashboardMuteAllButton_, window.uiaRefreshButton_,
-                             window.dashboardSoundOffButton_, window.dashboardPickUpButton_}) {
-            for (auto* label : button->findChildren<QLabel*>()) {
-                if (!label->isVisible()) continue;
-                QVERIFY(bounds(button).contains(bounds(label)));
-                const auto ink = label->fontMetrics().tightBoundingRect(label->text()).size();
-                const auto space = label->contentsRect().size();
-                QVERIFY2(space.width() >= ink.width() && space.height() >= ink.height(),
-                         qPrintable(button->objectName() + '/' + label->objectName()));
+        for (const int width : {window.minimumWidth(), 512, 1500}) {
+            window.resize(width, 720);
+            QTRY_COMPARE(window.width(), width);
+            QTRY_COMPARE(lastCell(), QPoint(0, 3));
+            QTRY_COMPARE(window.meetingCards_.first()->width(), window.meetingsArea_->viewport()->width());
+            const QRect header = bounds(window.collapseBar_);
+            const QRect summary = bounds(window.audioSummary_);
+            const QRect list = bounds(window.meetingsArea_);
+            QVERIFY(header.bottom() < summary.top());
+            QVERIFY(summary.bottom() < list.top());
+            QCOMPARE(summary.left(), list.left());
+            QCOMPARE(summary.right(), list.right());
+            QCOMPARE(list.left(), window.width() - list.right() - 1);
+            QRect previous = bounds(window.collapseButton_);
+            for (auto* button : {window.dashboardMuteAllButton_, window.dashboardSoundOffButton_,
+                                 window.dashboardPickUpButton_, window.uiaRefreshButton_}) {
+                const QRect current = bounds(button);
+                QVERIFY(button->isVisible());
+                QVERIFY(header.contains(current));
+                QVERIFY(current.left() > previous.right());
+                QVERIFY(qAbs(current.center().y() - header.center().y()) <= 1);
+                previous = current;
             }
-        }
-        QVERIFY(window.meetingsArea_->viewport()->width() >= window.meetingCards_.first()->width());
-        QTRY_COMPARE(lastCell(), QPoint(0, 3));
-        QTRY_COMPARE(window.meetingCards_.first()->width(), window.meetingsArea_->viewport()->width());
-        const int stackedLeft = bounds(window.meetingCards_.first()).left();
-        const int stackedWidth = window.meetingCards_.first()->width();
-        for (QFrame* card : window.meetingCards_) {
-            QCOMPARE(bounds(card).left(), stackedLeft);
-            QCOMPARE(card->width(), stackedWidth);
+            for (auto* card : window.meetingCards_) {
+                QCOMPARE(bounds(card).left(), bounds(window.meetingsArea_->viewport()).left());
+                QCOMPARE(card->width(), window.meetingsArea_->viewport()->width());
+            }
+            QTRY_COMPARE(window.meetingsArea_->horizontalScrollBar()->maximum(), 0);
         }
         QVERIFY(bounds(window.meetingCards_.at(1)).top() >= bounds(window.meetingCards_.first()).bottom());
         window.resize(window.minimumWidth(), 360);
         QTRY_COMPARE(window.meetingsArea_->horizontalScrollBar()->maximum(), 0);
         QTRY_VERIFY(window.meetingsArea_->verticalScrollBar()->maximum() > 0);
-        window.resize(1500, 720);
-        QTRY_VERIFY(bounds(window.dashboardSoundOffButton_).right() < bounds(window.meetingsArea_).left());
-        QTRY_COMPARE(window.meetingsArea_->horizontalScrollBar()->maximum(), 0);
+        QTRY_COMPARE(window.audioSummary_->verticalScrollBar()->maximum(), 0);
+        const int fourRowsHeight = window.audioSummary_->height();
+        auto extra = window.meetings_.first();
+        extra.tabRuntimeId = "fifth-tab";
+        window.meetings_.append(extra);
+        window.refreshMeetingCards();
+        QCOMPARE(window.audioSummary_->rowCount(), 5);
+        QCOMPARE(window.audioSummary_->height(), fourRowsHeight);
+        QTRY_VERIFY(window.audioSummary_->verticalScrollBar()->maximum() > 0);
+        QVERIFY(window.meetingsArea_->height() > 0);
+        window.setMeetingsCollapsed(true);
+        QVERIFY(!window.audioSummary_->isVisible());
+        QVERIFY(!window.dashboardMuteAllButton_->isVisible());
+        QVERIFY(!window.dashboardSoundOffButton_->isVisible());
+        window.setMeetingsCollapsed(false);
+        QVERIFY(window.audioSummary_->isVisible());
+        QVERIFY(window.dashboardMuteAllButton_->isVisible());
+        QVERIFY(window.dashboardSoundOffButton_->isVisible());
     }
 
     void rendersCardStates()
@@ -991,23 +1024,14 @@ private slots:
         auto* sound = activeCard->findChild<QPushButton*>("soundButton");
         QVERIFY(unmute != nullptr);
         QVERIFY(qAbs(unmute->width() * 2 - sound->width() * 3) <= 8);
-        const auto origin = [&window](QWidget* widget) {
-            return widget->mapTo(&window, QPoint());
-        };
-        const QPoint mute = origin(window.dashboardMuteAllButton_);
-        const QPoint soundOff = origin(window.dashboardSoundOffButton_);
-        const QPoint connection = origin(window.uiaRefreshButton_);
-        const QPoint pickup = origin(window.dashboardPickUpButton_);
-        QVERIFY(connection.y() < mute.y());
-        QVERIFY(pickup.y() < mute.y());
-        QVERIFY(pickup.x() > origin(window.collapseButton_).x());
-        QVERIFY(connection.x() > pickup.x());
-        QVERIFY(mute.y() < soundOff.y());
-        QVERIFY(qAbs(mute.x() - soundOff.x()) <= 2);
-        QVERIFY(mute.x() < window.meetingsArea_->mapTo(&window, QPoint()).x());
-        QCOMPARE(window.dashboardMuteAllButton_->findChild<QLabel*>("railCaption")->text(), QString("Mute all"));
-        QVERIFY(window.findChild<QPushButton*>("railCountButton") == nullptr);
-        QCOMPARE(window.dashboardSoundOffButton_->findChild<QLabel*>("railCaption")->text(), QString("Sound off all"));
+        QCOMPARE(window.dashboardMuteAllButton_->accessibleName(), "Mute all meetings");
+        QCOMPARE(window.dashboardSoundOffButton_->accessibleName(), "Sound off all meetings");
+        for (auto* button : {window.dashboardMuteAllButton_, window.dashboardSoundOffButton_}) {
+            QVERIFY(button->text().isEmpty());
+            QVERIFY(!button->icon().pixmap(button->iconSize()).isNull());
+            QVERIFY(button->toolTip().startsWith(button->accessibleName()));
+            QCOMPARE(button->size(), window.dashboardPickUpButton_->size());
+        }
         QCOMPARE(window.uiaRefreshButton_->accessibleName(), QString("Connection status"));
         QCOMPARE(window.uiaRefreshButton_->width(), window.uiaRefreshButton_->height());
         QVERIFY(window.uiaRefreshButton_->findChild<QLabel*>("railIcon") == nullptr);
@@ -1024,11 +1048,38 @@ private slots:
             QVERIFY(!label->isVisible() || label->text() != QStringLiteral("Idle"));
         }
         QVERIFY(window.grab().save("meeting-card-sound-states.png"));
-        window.resize(1120, 720);
+        window.resize(window.minimumWidth(), 720);
         QTest::qWait(100);
+        const auto* readSound = window.meetingCards_.last()->findChild<QPushButton*>("soundButton");
+        QVERIFY(readSound->width() >= readSound->sizeHint().width());
         QVERIFY(window.grab().save("meeting-card-sound-states-minimum.png"));
+        const QStringList microphones{"Muted", "Disconnected", "Unknown"};
+        const QStringList sounds{"On", "Off", "Unknown"};
+        auto* summary = window.audioSummary_;
+        QCOMPARE(window.findChildren<QTableWidget*>("meetingAudioStatus").size(), 1);
+        QVERIFY(summary->isVisible());
+        QCOMPARE(summary->rowCount(), window.meetingCards_.size());
+        QCOMPARE(summary->horizontalHeaderItem(0)->text(), "Meeting");
+        QCOMPARE(summary->horizontalHeaderItem(1)->text(), "Microphone");
+        QCOMPARE(summary->horizontalHeaderItem(2)->text(), "Sound");
+        QTRY_COMPARE(summary->horizontalScrollBar()->maximum(), 0);
         for (int index = 0; index < window.meetingCards_.size(); ++index)
         {
+            const auto* card = window.meetingCards_.at(index);
+            QVERIFY(!card->findChild<QWidget*>("meetingAudioStatus"));
+            const auto* name = summary->item(index, 0);
+            const auto* mic = summary->item(index, 1);
+            const auto* soundState = summary->item(index, 2);
+            QVERIFY(name && mic && soundState);
+            QCOMPARE(name->text(), window.meetings_.at(index).title);
+            QVERIFY(name->toolTip().contains(name->text()));
+            QCOMPARE(mic->text(), microphones.at(index));
+            QCOMPARE(soundState->text(), sounds.at(index));
+            for (const auto* value : {mic, soundState}) {
+                const QRect cell = summary->visualItemRect(value);
+                QVERIFY(summary->viewport()->rect().contains(cell));
+                QVERIFY(cell.width() >= summary->fontMetrics().horizontalAdvance(value->text()));
+            }
             int row = -1;
             int column = -1;
             int rowSpan = 0;

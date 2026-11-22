@@ -10,7 +10,6 @@
 #include <QString>
 #include <QStringList>
 
-class QBoxLayout;
 class QComboBox;
 class QFrame;
 class QGridLayout;
@@ -20,6 +19,7 @@ class QPushButton;
 class QScrollArea;
 class QTabWidget;
 class QThread;
+class MeetingAudioSummary;
 class UiaWorker;
 
 class MeetingControllerPane final : public QWidget
@@ -90,11 +90,9 @@ private slots:
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
-    void resizeEvent(QResizeEvent* event) override;
 
 private:
     QWidget* createDashboardPage();
-    void arrangeDashboard(int width);
     QWidget* createDiagnosticsPage();
 
     QFrame* createMeetingCard(const ManagedMeeting& meeting);
@@ -140,8 +138,7 @@ private:
     QStringList batchFailures_;
 
     QWidget* dashboardPage_ = nullptr;
-    QBoxLayout* dashboardLayout_ = nullptr;
-    QGridLayout* actionsLayout_ = nullptr;
+    MeetingAudioSummary* audioSummary_ = nullptr;
     QWidget* batchRow_ = nullptr;
     QWidget* collapseBar_ = nullptr;
     QPushButton* collapseButton_ = nullptr;

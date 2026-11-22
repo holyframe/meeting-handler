@@ -1,4 +1,5 @@
 #include "MeetingControllerPane.h"
+#include "MeetingAudioSummary.h"
 #include "windows/UiaWorker.h"
 
 #include <algorithm>
@@ -22,7 +23,6 @@
 #include <QMouseEvent>
 #include <QPlainTextEdit>
 #include <QPushButton>
-#include <QResizeEvent>
 #include <QScrollArea>
 #include <QSizePolicy>
 #include <QStyle>
@@ -36,7 +36,6 @@
 namespace
 {
 constexpr int kMeetingCardWidth = 300;
-constexpr int kActionsRailWidth = 188;
 constexpr int kContentMargin = 12;
 constexpr int kMeetingsColumnMinimum = kMeetingCardWidth + 2 * kContentMargin;
 
@@ -55,44 +54,12 @@ QFrame* makePanel(QWidget* parent, const QString& objectName = "panel")
     return panel;
 }
 
-QLabel* railText(const QString& text, const QString& objectName, QWidget* parent)
+QLabel* hiddenLabel(const QString& text, const QString& objectName, QWidget* parent)
 {
     auto* label = new QLabel(text, parent);
     label->setObjectName(objectName);
-    label->setWordWrap(true);
-    label->setAttribute(Qt::WA_TransparentForMouseEvents);
+    label->hide();
     return label;
-}
-
-QPushButton* makeRailButton(
-    QWidget* parent, const QChar glyph, const QString& objectName, const QString& name, QVBoxLayout** textColumn)
-{
-    auto* button = new QPushButton(parent);
-    button->setObjectName(objectName);
-    button->setCursor(Qt::PointingHandCursor);
-    button->setFocusPolicy(Qt::StrongFocus);
-    button->setAccessibleName(name);
-    button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
-
-    auto* row = new QHBoxLayout(button);
-    row->setSizeConstraint(QLayout::SetMinimumSize);
-    row->setContentsMargins(10, 8, 10, 8);
-    row->setSpacing(8);
-
-    auto* icon = railText(QString(glyph), "railIcon", button);
-    icon->setAlignment(Qt::AlignCenter);
-    icon->setFixedSize(20, 20);
-    icon->setWordWrap(false);
-
-    auto* column = new QVBoxLayout();
-    column->setContentsMargins(0, 0, 0, 0);
-    column->setSpacing(1);
-    column->addWidget(railText(name, "railCaption", button));
-    row->addWidget(icon, 0, Qt::AlignVCenter);
-    row->addLayout(column, 1);
-    if (textColumn)
-        *textColumn = column;
-    return button;
 }
 
 }
@@ -122,16 +89,41 @@ MeetingControllerPane::MeetingControllerPane(QWidget* parent)
     collapseButton_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     barLayout->addWidget(collapseButton_, 1);
 
-    dashboardPickUpButton_ = new QPushButton(collapseBar_);
-    dashboardPickUpButton_->setObjectName("importMeetingTabsButton");
-    dashboardPickUpButton_->setIcon(QIcon(QStringLiteral(":/icons/import-meeting-tabs.svg")));
-    dashboardPickUpButton_->setIconSize(QSize(16, 16));
-    dashboardPickUpButton_->setAccessibleName("Pick up meeting tabs");
+    const auto addHeaderButton = [this, barLayout](const QString& objectName, const QString& iconPath,
+                                                  const QString& name) {
+        auto* button = new QPushButton(collapseBar_);
+        button->setObjectName(objectName);
+        button->setProperty("meetingHeaderAction", true);
+        button->setIcon(QIcon(iconPath));
+        button->setIconSize(QSize(16, 16));
+        button->setAccessibleName(name);
+        button->setCursor(Qt::PointingHandCursor);
+        button->setFocusPolicy(Qt::StrongFocus);
+        button->setFixedSize(24, 24);
+        barLayout->addWidget(button, 0, Qt::AlignVCenter);
+        return button;
+    };
+    dashboardMuteAllButton_ = addHeaderButton("muteAllMeetingsButton", ":/icons/microphone-off.svg",
+                                              tr("Mute all meetings"));
+    dashboardMuteAllButton_->setEnabled(false);
+    dashboardSoundOffButton_ = addHeaderButton("soundOffAllMeetingsButton", ":/icons/speaker-off.svg",
+                                               tr("Sound off all meetings"));
+    dashboardSoundOffButton_->setEnabled(false);
+    dashboardPickUpButton_ = addHeaderButton("importMeetingTabsButton", ":/icons/import-meeting-tabs.svg",
+                                             tr("Pick up meeting tabs"));
     dashboardPickUpButton_->setToolTip(QStringLiteral("Pick up one or more Chrome meeting tabs."));
-    dashboardPickUpButton_->setCursor(Qt::PointingHandCursor);
-    dashboardPickUpButton_->setFocusPolicy(Qt::StrongFocus);
-    dashboardPickUpButton_->setFixedSize(24, 24);
-    barLayout->addWidget(dashboardPickUpButton_, 0, Qt::AlignVCenter);
+
+    uiaRefreshButton_ = new QPushButton(collapseBar_);
+    uiaRefreshButton_->setObjectName("railConnectionButton");
+    uiaRefreshButton_->setCursor(Qt::PointingHandCursor);
+    uiaRefreshButton_->setFocusPolicy(Qt::StrongFocus);
+    uiaRefreshButton_->setAccessibleName("Connection status");
+    uiaRefreshButton_->setProperty("connection", "idle");
+    uiaRefreshButton_->setEnabled(false);
+    uiaRefreshButton_->setFixedSize(10, 10);
+    barLayout->addWidget(uiaRefreshButton_, 0, Qt::AlignVCenter);
+    uiaValue_ = hiddenLabel("Idle", "railValue", uiaRefreshButton_);
+    uiaDetail_ = hiddenLabel("Starts on first inspection", "railDetail", uiaRefreshButton_);
 
     dashboardPage_ = createDashboardPage();
     refreshCollapseTitle();
@@ -263,59 +255,19 @@ QWidget* MeetingControllerPane::createDashboardPage()
     page->setObjectName("pageRoot");
     page->setAttribute(Qt::WA_StyledBackground);
 
-    dashboardLayout_ = new QBoxLayout(QBoxLayout::LeftToRight, page);
-    auto* layout = dashboardLayout_;
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
-
-    auto* rail = new QFrame(page);
-    rail->setObjectName("controllerRail");
-    actionsLayout_ = new QGridLayout(rail);
-    actionsLayout_->setContentsMargins(8, 10, 8, 10);
-    actionsLayout_->setSpacing(8);
-    actionsLayout_->setAlignment(Qt::AlignTop);
-
-    dashboardMuteAllButton_ = makeRailButton(rail, QChar(0xE720), "railMuteButton", "Mute all", nullptr);
-    dashboardMuteAllButton_->setEnabled(false);
-
-    meetingCountValue_ = railText("0/0", "railValue", page);
-    meetingCountValue_->hide();
-    meetingCountDetail_ = railText("Active / total", "railDetail", page);
-    meetingCountDetail_->hide();
-
-    dashboardSoundOffButton_ = makeRailButton(rail, QChar(0xE74F), "railSoundButton", "Sound off all", nullptr);
-    dashboardSoundOffButton_->setEnabled(false);
-
-    uiaRefreshButton_ = new QPushButton(collapseBar_);
-    uiaRefreshButton_->setObjectName("railConnectionButton");
-    uiaRefreshButton_->setCursor(Qt::PointingHandCursor);
-    uiaRefreshButton_->setFocusPolicy(Qt::StrongFocus);
-    uiaRefreshButton_->setAccessibleName("Connection status");
-    uiaRefreshButton_->setProperty("connection", "idle");
-    uiaRefreshButton_->setEnabled(false);
-    uiaRefreshButton_->setFixedSize(10, 10);
-    uiaRefreshButton_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-    if (auto* barLayout = qobject_cast<QHBoxLayout*>(collapseBar_->layout()))
-        barLayout->addWidget(uiaRefreshButton_, 0, Qt::AlignVCenter);
-    uiaValue_ = railText("Idle", "railValue", uiaRefreshButton_);
-    uiaValue_->hide();
-    uiaDetail_ = railText("Starts on first inspection", "railDetail", uiaRefreshButton_);
-    uiaDetail_->hide();
-
-    layout->addWidget(rail);
-
-    auto* content = new QWidget(page);
-    auto* contentLayout = new QVBoxLayout(content);
+    auto* contentLayout = new QVBoxLayout(page);
     contentLayout->setContentsMargins(kContentMargin, 8, kContentMargin, 8);
     contentLayout->setSpacing(8);
     contentLayout->setAlignment(Qt::AlignTop);
-    layout->addWidget(content, 1);
 
-    meetingCountLabel_ = new QLabel("0", content);
-    meetingCountLabel_->setObjectName("countPill");
-    meetingCountLabel_->hide();
+    meetingCountValue_ = hiddenLabel("0/0", "railValue", page);
+    meetingCountDetail_ = hiddenLabel("Active / total", "railDetail", page);
+    meetingCountLabel_ = hiddenLabel("0", "countPill", page);
 
-    batchRow_ = new QWidget(content);
+    audioSummary_ = new MeetingAudioSummary(page);
+    contentLayout->addWidget(audioSummary_);
+
+    batchRow_ = new QWidget(page);
     batchRow_->setObjectName("batchRow");
     auto* meetingHeader = new QHBoxLayout(batchRow_);
     meetingHeader->setContentsMargins(0, 0, 0, 0);
@@ -364,9 +316,7 @@ QWidget* MeetingControllerPane::createDashboardPage()
     auto* emptyTitle = new QLabel("No meetings picked up", emptyCard);
     emptyTitle->setObjectName("emptyTitle");
     emptyTitle->setAlignment(Qt::AlignCenter);
-    auto* emptyDescription = makeMutedLabel(
-        "Choose Pick up tabs, then select one or more Chrome tabs to import.",
-        emptyCard);
+    auto* emptyDescription = makeMutedLabel("Select + to import Chrome tabs.", emptyCard);
     emptyDescription->setAlignment(Qt::AlignCenter);
     emptyDescription->setMinimumWidth(0);
     emptyDescription->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
@@ -378,43 +328,10 @@ QWidget* MeetingControllerPane::createDashboardPage()
     meetingsArea->setWidget(meetingsContent);
     meetingsArea->viewport()->installEventFilter(this);
     contentLayout->addWidget(meetingsArea, 1);
-    arrangeDashboard(width());
     layoutMeetingCards();
     refreshActionTooltips();
 
     return page;
-}
-
-void MeetingControllerPane::resizeEvent(QResizeEvent* event)
-{
-    QWidget::resizeEvent(event);
-    if (!meetingsCollapsed_)
-        arrangeDashboard(event->size().width());
-    fitMeetingCards();
-}
-
-void MeetingControllerPane::arrangeDashboard(int width)
-{
-    const bool compact = width < kActionsRailWidth + kMeetingsColumnMinimum;
-    const auto direction = compact ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight;
-    if (actionsLayout_->count() && dashboardLayout_->direction() == direction)
-        return;
-    dashboardLayout_->setDirection(direction);
-    auto* rail = actionsLayout_->parentWidget();
-    rail->setMinimumWidth(compact ? 0 : kActionsRailWidth);
-    rail->setMaximumWidth(compact ? QWIDGETSIZE_MAX : kActionsRailWidth);
-    rail->setSizePolicy(compact ? QSizePolicy::Expanding : QSizePolicy::Fixed,
-                        compact ? QSizePolicy::Fixed : QSizePolicy::Expanding);
-    const int columns = compact ? 2 : 1;
-    int index = 0;
-    for (auto* button : {dashboardMuteAllButton_, dashboardSoundOffButton_})
-    {
-        actionsLayout_->removeWidget(button);
-        actionsLayout_->addWidget(button, index / columns, index % columns);
-        ++index;
-    }
-    actionsLayout_->setColumnStretch(0, 1);
-    actionsLayout_->setColumnStretch(1, compact ? 1 : 0);
 }
 
 QWidget* MeetingControllerPane::createDiagnosticsPage()
@@ -518,7 +435,6 @@ void MeetingControllerPane::setMeetingsCollapsed(bool collapsed)
     {
         setMaximumWidth(QWIDGETSIZE_MAX);
         setMinimumWidth(kMeetingsColumnMinimum);
-        arrangeDashboard(width());
     }
     collapseButton_->setAccessibleName(collapsed ? "Expand meetings" : "Collapse meetings");
     collapseButton_->setToolTip(collapsed ? "Show the meeting controls" : "Hide the meeting controls");
@@ -953,8 +869,8 @@ QFrame* MeetingControllerPane::createMeetingCard(const ManagedMeeting& meeting)
     auto* titleColumn = new QVBoxLayout();
     titleColumn->setSpacing(1);
 
-    auto* title = new QLineEdit(
-        meeting.title.isEmpty() ? QStringLiteral("Zoom meeting") : meeting.title, card);
+    auto* title = new QLineEdit(meeting.displayTitle(), card);
+    title->setCursorPosition(0);
     title->setObjectName("meetingTitle");
     title->setMinimumWidth(0);
     title->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
@@ -976,6 +892,7 @@ QFrame* MeetingControllerPane::createMeetingCard(const ManagedMeeting& meeting)
             if (current->title != name)
             {
                 current->title = name;
+                audioSummary_->setMeetings(meetings_);
                 appendLog(QString("Renamed a meeting card to \"%1\".").arg(name));
             }
         }
@@ -1036,45 +953,6 @@ QFrame* MeetingControllerPane::createMeetingCard(const ManagedMeeting& meeting)
 
     layout->addLayout(headerRow);
 
-    auto* stateRow = new QHBoxLayout();
-    stateRow->setSpacing(8);
-
-    auto* microphone = new QLabel(card);
-    switch (meeting.microphone)
-    {
-    case ManagedMeeting::Microphone::Muted:
-        microphone->setText("◉ Mic muted");
-        microphone->setObjectName("micMuted");
-        break;
-    case ManagedMeeting::Microphone::Unmuted:
-        microphone->setText("◉ Mic on");
-        microphone->setObjectName("micUnmuted");
-        break;
-    case ManagedMeeting::Microphone::AudioNotConnected:
-        microphone->setText("◉ Mic disconnected");
-        microphone->setObjectName("micUnknown");
-        break;
-    default:
-        microphone->setText("◉ Mic unread");
-        microphone->setObjectName("micUnknown");
-        break;
-    }
-
-    auto* sound = new QLabel(card);
-    sound->setObjectName("soundState");
-    sound->setProperty("state", meeting.sound == ManagedMeeting::Sound::On ? "connected"
-        : meeting.sound == ManagedMeeting::Sound::Off ? "disconnected" : "unknown");
-    sound->setText(meeting.sound == ManagedMeeting::Sound::On ? "Sound on"
-        : meeting.sound == ManagedMeeting::Sound::Off ? "Sound off" : "Sound unread");
-    sound->setToolTip("Shows the last computer-audio connection state read from Zoom. "
-                      "It does not measure speaker volume.");
-    microphone->setAttribute(Qt::WA_TransparentForMouseEvents);
-    sound->setAttribute(Qt::WA_TransparentForMouseEvents);
-    stateRow->addWidget(microphone);
-    stateRow->addStretch();
-    stateRow->addWidget(sound);
-    layout->addLayout(stateRow);
-
     auto* identity = makeMutedLabel(
         meeting.meetingId.isEmpty()
             ? QString("Chrome tab")
@@ -1117,6 +995,7 @@ QFrame* MeetingControllerPane::createMeetingCard(const ManagedMeeting& meeting)
     soundButton->setEnabled(!meetingBusy_);
     if (meeting.sound == ManagedMeeting::Sound::Unknown)
     {
+        soundButton->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
         soundButton->setText("Read Sound");
         soundButton->setIcon(style()->standardIcon(QStyle::SP_BrowserReload));
         soundButton->setToolTip("Read Zoom's computer-audio state before choosing Sound On or Off.");
@@ -1180,6 +1059,7 @@ void MeetingControllerPane::refreshMeetingCards()
         QFrame* card = createMeetingCard(meetings_.at(index));
         meetingCards_.append(card);
     }
+    audioSummary_->setMeetings(meetings_);
     layoutMeetingCards();
     updateMeetingCounts();
 
@@ -1193,13 +1073,12 @@ void MeetingControllerPane::refreshMeetingCards()
 void MeetingControllerPane::refreshActionTooltips()
 {
     const QString needMeetings = QStringLiteral("Pick up a meeting tab first.");
-    dashboardMuteAllButton_->setToolTip(meetings_.isEmpty()
-        ? needMeetings
-        : QStringLiteral("Switches to each meeting tab in turn and mutes it, verifying each result."));
-    dashboardSoundOffButton_->setToolTip(meetings_.isEmpty()
-        ? needMeetings
-        : QStringLiteral("Leaves computer audio for every meeting. Sound turns off and the microphone disconnects. "
-                         "Chrome switches to each meeting tab."));
+    dashboardMuteAllButton_->setToolTip(dashboardMuteAllButton_->accessibleName() + '\n' +
+        (meetings_.isEmpty() ? needMeetings
+            : tr("Switches to each meeting tab and verifies that its microphone is muted.")));
+    dashboardSoundOffButton_->setToolTip(dashboardSoundOffButton_->accessibleName() + '\n' +
+        (meetings_.isEmpty() ? needMeetings
+            : tr("Switches to each meeting tab and disconnects its Zoom computer audio, including the microphone.")));
     const QString connection = QString("Connection status · %1\n%2")
                                    .arg(uiaValue_->text(), uiaDetail_->text());
     uiaRefreshButton_->setToolTip(meetings_.isEmpty()
@@ -1230,10 +1109,8 @@ void MeetingControllerPane::refreshCollapseTitle()
         return;
     auto* barLayout = qobject_cast<QHBoxLayout*>(collapseBar_->layout());
     collapseButton_->setProperty("collapsed", meetingsCollapsed_);
-    if (uiaRefreshButton_)
-        uiaRefreshButton_->setVisible(!meetingsCollapsed_);
-    if (dashboardPickUpButton_)
-        dashboardPickUpButton_->setVisible(!meetingsCollapsed_);
+    for (auto* action : {dashboardMuteAllButton_, dashboardSoundOffButton_, dashboardPickUpButton_, uiaRefreshButton_})
+        action->setVisible(!meetingsCollapsed_);
     if (barLayout)
         barLayout->activate();
     if (meetingsCollapsed_)
@@ -1262,8 +1139,9 @@ void MeetingControllerPane::refreshCollapseTitle()
 
 void MeetingControllerPane::refreshBatchCard(const QString& previousKey, const ManagedMeeting& meeting)
 {
-    for (QFrame*& card : meetingCards_)
+    for (int row = 0; row < meetingCards_.size(); ++row)
     {
+        QFrame*& card = meetingCards_[row];
         if (card->property("meetingKey").toString() != previousKey)
             continue;
         QFrame* replacement = createMeetingCard(meeting);
@@ -1272,6 +1150,7 @@ void MeetingControllerPane::refreshBatchCard(const QString& previousKey, const M
         card->deleteLater();
         card = replacement;
         replacement->show();
+        audioSummary_->updateMeeting(row, meeting);
         break;
     }
     fitMeetingCards();

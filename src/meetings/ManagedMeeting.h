@@ -21,6 +21,7 @@ struct ManagedMeeting
     Sound sound = Sound::Unknown;
 
     QString key() const { return windowHandle + '/' + tabRuntimeId; }
+    QString displayTitle() const { return title.isEmpty() ? QStringLiteral("Zoom meeting") : title; }
     QString automationName() const { return chromeTabName.isEmpty() ? title : chromeTabName; }
     quintptr handle() const
     {
