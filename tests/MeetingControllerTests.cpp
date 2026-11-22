@@ -657,6 +657,69 @@ private slots:
         QVERIFY(window.audioSummary_->isHidden());
     }
 
+    void clickingMeetingNameBringsItsCardToTop()
+    {
+        MeetingControllerPane window;
+        populate(window, ManagedMeeting::Sound::On, ManagedMeeting::Microphone::Muted);
+        const auto first = window.meetings_.first();
+        QStringList expectedOrder{first.key()};
+        for (int row = 1; row <= 5; ++row) {
+            auto meeting = first;
+            meeting.tabRuntimeId = QString::number(row);
+            if (row < 5)
+                meeting.title = QString("Meeting %1").arg(row);
+            expectedOrder.append(meeting.key());
+            window.meetings_.append(meeting);
+        }
+        window.meetings_.last().sound = ManagedMeeting::Sound::Off;
+        window.meetings_.last().microphone = ManagedMeeting::Microphone::AudioNotConnected;
+        window.refreshMeetingCards();
+        window.resize(window.minimumWidth(), 360);
+        window.show();
+
+        auto* summary = window.audioSummary_;
+        auto* cardScroll = window.meetingsArea_->verticalScrollBar();
+        QSignalSpy tabActivation(&window, &MeetingControllerPane::activationRequested);
+        QTRY_VERIFY(cardScroll->maximum() > 0);
+        QTRY_VERIFY(summary->verticalScrollBar()->maximum() > 0);
+        cardScroll->setValue(cardScroll->maximum());
+        summary->scrollToBottom();
+        const int lastRow = summary->rowCount() - 1;
+        const auto clickCell = [summary](int row, int column) {
+            const QPoint center = summary->visualItemRect(summary->item(row, column)).center();
+            QVERIFY(summary->viewport()->rect().contains(center));
+            QTest::mouseClick(summary->viewport(), Qt::LeftButton, Qt::NoModifier, center);
+        };
+        for (int column : {1, 2}) {
+            clickCell(lastRow, column);
+            QCOMPARE(window.meetings_.first().key(), first.key());
+            QCOMPARE(cardScroll->value(), cardScroll->maximum());
+        }
+
+        clickCell(lastRow, 0);
+        expectedOrder.move(lastRow, 0);
+        for (int row = 0; row < expectedOrder.size(); ++row) {
+            QCOMPARE(window.meetings_.at(row).key(), expectedOrder.at(row));
+            QCOMPARE(summary->item(row, 0)->data(Qt::UserRole).toString(), expectedOrder.at(row));
+            const auto* card = window.meetingsLayout_->itemAtPosition(row, 0)->widget();
+            QCOMPARE(card->property("meetingKey").toString(), expectedOrder.at(row));
+        }
+        QCOMPARE(summary->item(0, 1)->text(), "Disconnected");
+        QCOMPARE(summary->item(0, 2)->text(), "Off");
+        QTRY_COMPARE(cardScroll->value(), cardScroll->minimum());
+        QCOMPARE(summary->verticalScrollBar()->value(), summary->verticalScrollBar()->minimum());
+
+        cardScroll->setValue(cardScroll->maximum());
+        clickCell(0, 0);
+        QCOMPARE(cardScroll->value(), cardScroll->minimum());
+        QCOMPARE(window.meetings_.first().key(), expectedOrder.first());
+
+        summary->setCurrentCell(1, 0);
+        QTest::keyClick(summary, Qt::Key_Return);
+        QCOMPARE(window.meetings_.first().key(), first.key());
+        QCOMPARE(tabActivation.count(), 0);
+    }
+
     void refreshChecksEveryMeetingConnection()
     {
         MeetingControllerPane window;
@@ -996,6 +1059,8 @@ private slots:
         auto unknown = disconnected;
         unknown.tabRuntimeId = "unknown-tab";
         unknown.title = "Meeting awaiting an audio read";
+        unknown.profileName.clear();
+        unknown.meetingId.clear();
         unknown.sound = ManagedMeeting::Sound::Unknown;
         unknown.microphone = ManagedMeeting::Microphone::Unknown;
         window.meetings_.append(unknown);
@@ -1067,6 +1132,12 @@ private slots:
         {
             const auto* card = window.meetingCards_.at(index);
             QVERIFY(!card->findChild<QWidget*>("meetingAudioStatus"));
+            for (const auto* label : card->findChildren<QLabel*>()) {
+                QVERIFY(label->text() != QStringLiteral("Test profile"));
+                QVERIFY(!label->text().startsWith(QStringLiteral("Zoom Meeting ")));
+                QVERIFY(!label->text().startsWith(QStringLiteral("Chrome (Window ")));
+                QVERIFY(label->text() != QStringLiteral("Chrome tab"));
+            }
             const auto* name = summary->item(index, 0);
             const auto* mic = summary->item(index, 1);
             const auto* soundState = summary->item(index, 2);

@@ -3,6 +3,8 @@
 
 #include <QBrush>
 #include <QHeaderView>
+#include <QKeyEvent>
+#include <QMouseEvent>
 
 namespace
 {
@@ -28,6 +30,7 @@ MeetingAudioSummary::MeetingAudioSummary(QWidget* parent)
     verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
     setEditTriggers(QAbstractItemView::NoEditTriggers);
     setSelectionMode(QAbstractItemView::NoSelection);
+    setMouseTracking(true);
     setTabKeyNavigation(false);
     setWordWrap(false);
     setShowGrid(false);
@@ -35,7 +38,31 @@ MeetingAudioSummary::MeetingAudioSummary(QWidget* parent)
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    connect(this, &QTableWidget::itemClicked, this, &MeetingAudioSummary::activateMeetingName);
     hide();
+}
+
+void MeetingAudioSummary::activateMeetingName(QTableWidgetItem* cell)
+{
+    if (cell && cell->column() == MeetingName)
+        emit meetingNameActivated(cell->data(Qt::UserRole).toString());
+}
+
+void MeetingAudioSummary::keyPressEvent(QKeyEvent* event)
+{
+    if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) && currentColumn() == MeetingName) {
+        activateMeetingName(currentItem());
+        event->accept();
+        return;
+    }
+    QTableWidget::keyPressEvent(event);
+}
+
+void MeetingAudioSummary::mouseMoveEvent(QMouseEvent* event)
+{
+    viewport()->setCursor(indexAt(event->position().toPoint()).column() == MeetingName
+        ? Qt::PointingHandCursor : Qt::ArrowCursor);
+    QTableWidget::mouseMoveEvent(event);
 }
 
 void MeetingAudioSummary::setMeetings(const QList<ManagedMeeting>& meetings)
@@ -65,12 +92,16 @@ void MeetingAudioSummary::updateMeeting(int row, const ManagedMeeting& meeting)
     };
 
     const QString title = meeting.displayTitle();
-    auto* name = setCell(MeetingName, title);
+    auto* name = setCell(MeetingName, title, QColor("#A4C9F0"));
+    name->setData(Qt::UserRole, meeting.key());
+    const QString hint = tr("Move this meeting card to the top.");
+    name->setData(Qt::AccessibleDescriptionRole, hint);
     QStringList details{title};
     if (!meeting.profileName.isEmpty())
         details.append(meeting.profileName);
     if (!meeting.meetingId.isEmpty())
         details.append(tr("Zoom Meeting %1").arg(meeting.meetingId));
+    details.append(hint);
     name->setToolTip(details.join('\n'));
 
     switch (meeting.microphone)

@@ -16,7 +16,6 @@ struct ManagedMeeting
     QString host;
     QString meetingId;
     QString profileName;
-    int windowNumber = 0;
     Microphone microphone = Microphone::Unknown;
     Sound sound = Sound::Unknown;
 

@@ -24,6 +24,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSizePolicy>
 #include <QStyle>
 #include <QTabWidget>
@@ -265,6 +266,15 @@ QWidget* MeetingControllerPane::createDashboardPage()
     meetingCountLabel_ = hiddenLabel("0", "countPill", page);
 
     audioSummary_ = new MeetingAudioSummary(page);
+    connect(audioSummary_, &MeetingAudioSummary::meetingNameActivated, this, [this](const QString& key) {
+        if (meetings_.isEmpty())
+            return;
+        moveMeeting(key, meetings_.first().key());
+        audioSummary_->setCurrentCell(0, 0);
+        audioSummary_->scrollToTop();
+        auto* scroll = meetingsArea_->verticalScrollBar();
+        scroll->setValue(scroll->minimum());
+    });
     contentLayout->addWidget(audioSummary_);
 
     batchRow_ = new QWidget(page);
@@ -866,9 +876,6 @@ QFrame* MeetingControllerPane::createMeetingCard(const ManagedMeeting& meeting)
     iconTile->setAlignment(Qt::AlignCenter);
     iconTile->setFixedSize(38, 38);
 
-    auto* titleColumn = new QVBoxLayout();
-    titleColumn->setSpacing(1);
-
     auto* title = new QLineEdit(meeting.displayTitle(), card);
     title->setCursorPosition(0);
     title->setObjectName("meetingTitle");
@@ -898,19 +905,8 @@ QFrame* MeetingControllerPane::createMeetingCard(const ManagedMeeting& meeting)
         }
     });
 
-    const QString sourceText = meeting.profileName.isEmpty()
-        ? QString("Chrome (Window %1)").arg(meeting.windowNumber)
-        : meeting.profileName;
-    auto* source = makeMutedLabel(sourceText, card);
-    source->setMinimumWidth(0);
-    source->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    source->setAttribute(Qt::WA_TransparentForMouseEvents);
-
-    titleColumn->addWidget(title);
-    titleColumn->addWidget(source);
-
-    headerRow->addWidget(iconTile, 0, Qt::AlignTop);
-    headerRow->addLayout(titleColumn, 1);
+    headerRow->addWidget(iconTile, 0, Qt::AlignVCenter);
+    headerRow->addWidget(title, 1, Qt::AlignVCenter);
     iconTile->setAttribute(Qt::WA_TransparentForMouseEvents);
 
     if (isActive)
@@ -937,7 +933,7 @@ QFrame* MeetingControllerPane::createMeetingCard(const ManagedMeeting& meeting)
 
         badgeLayout->addWidget(refreshButton);
         badgeLayout->addWidget(badgeText);
-        headerRow->addWidget(badge, 0, Qt::AlignTop);
+        headerRow->addWidget(badge, 0, Qt::AlignVCenter);
     }
 
     auto* closeButton = new QPushButton(QStringLiteral("×"), card);
@@ -949,19 +945,9 @@ QFrame* MeetingControllerPane::createMeetingCard(const ManagedMeeting& meeting)
     closeButton->setEnabled(!meetingBusy_);
     connect(closeButton, &QPushButton::clicked,
             this, [this, key] { removeMeeting(key); });
-    headerRow->addWidget(closeButton, 0, Qt::AlignTop);
+    headerRow->addWidget(closeButton, 0, Qt::AlignVCenter);
 
     layout->addLayout(headerRow);
-
-    auto* identity = makeMutedLabel(
-        meeting.meetingId.isEmpty()
-            ? QString("Chrome tab")
-            : QString("Zoom Meeting %1").arg(meeting.meetingId),
-        card);
-    identity->setMinimumWidth(0);
-    identity->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    identity->setAttribute(Qt::WA_TransparentForMouseEvents);
-    layout->addWidget(identity);
 
     auto* actionRow = new QHBoxLayout();
     actionRow->setSpacing(8);
@@ -1044,15 +1030,6 @@ void MeetingControllerPane::refreshMeetingCards()
     meetingCards_.clear();
 
     meetingEmptyCard_->setVisible(meetings_.isEmpty());
-
-    QStringList windowOrder;
-    for (ManagedMeeting& meeting : meetings_)
-    {
-        if (!windowOrder.contains(meeting.windowHandle))
-            windowOrder.append(meeting.windowHandle);
-
-        meeting.windowNumber = windowOrder.indexOf(meeting.windowHandle) + 1;
-    }
 
     for (int index = 0; index < meetings_.size(); ++index)
     {
@@ -1415,9 +1392,12 @@ void MeetingControllerPane::moveMeeting(const QString& fromKey, const QString& t
     if (from < 0 || to < 0 || from == to)
         return;
 
+    clearDrag();
     meetings_.move(from, to);
+    meetingCards_.move(from, to);
+    audioSummary_->setMeetings(meetings_);
+    layoutMeetingCards();
     appendLog(QString("Moved \"%1\" in the meeting list.").arg(meetings_.at(to).title));
-    refreshMeetingCards();
 }
 
 void MeetingControllerPane::removeMeeting(const QString& key)
