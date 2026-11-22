@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
-find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Svg)
 
 add_compile_definitions(UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX WINVER=0x0A00 _WIN32_WINNT=0x0A00)
 if(MSVC)
@@ -52,7 +52,8 @@ target_link_libraries(meeting_handler_core
 qt_add_resources(meeting_handler_core application_assets
     PREFIX "/"
     BASE resources
-    FILES resources/icons/meeting-handler.ico resources/controller.qss resources/captions.qss
+    FILES resources/icons/meeting-handler.ico resources/icons/import-meeting-tabs.svg
+          resources/controller.qss resources/captions.qss
 )
 
 # The shared-window test uses the packaged app's Windows DPI manifest.

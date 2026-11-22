@@ -14,6 +14,7 @@
 #include <QGridLayout>
 #include <QHash>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QJsonDocument>
 #include <QLabel>
 #include <QLineEdit>
@@ -120,6 +121,17 @@ MeetingControllerPane::MeetingControllerPane(QWidget* parent)
     collapseButton_->setToolTip("Hide the meeting controls");
     collapseButton_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     barLayout->addWidget(collapseButton_, 1);
+
+    dashboardPickUpButton_ = new QPushButton(collapseBar_);
+    dashboardPickUpButton_->setObjectName("importMeetingTabsButton");
+    dashboardPickUpButton_->setIcon(QIcon(QStringLiteral(":/icons/import-meeting-tabs.svg")));
+    dashboardPickUpButton_->setIconSize(QSize(16, 16));
+    dashboardPickUpButton_->setAccessibleName("Pick up meeting tabs");
+    dashboardPickUpButton_->setToolTip(QStringLiteral("Pick up one or more Chrome meeting tabs."));
+    dashboardPickUpButton_->setCursor(Qt::PointingHandCursor);
+    dashboardPickUpButton_->setFocusPolicy(Qt::StrongFocus);
+    dashboardPickUpButton_->setFixedSize(24, 24);
+    barLayout->addWidget(dashboardPickUpButton_, 0, Qt::AlignVCenter);
 
     dashboardPage_ = createDashboardPage();
     refreshCollapseTitle();
@@ -290,10 +302,6 @@ QWidget* MeetingControllerPane::createDashboardPage()
     uiaDetail_ = railText("Starts on first inspection", "railDetail", uiaRefreshButton_);
     uiaDetail_->hide();
 
-    dashboardPickUpButton_ = makeRailButton(
-        rail, QChar(0xE710), "railPickupButton", "Pick up tabs", nullptr);
-    dashboardPickUpButton_->setAccessibleName("Pick up meeting tabs");
-
     layout->addWidget(rail);
 
     auto* content = new QWidget(page);
@@ -399,7 +407,7 @@ void MeetingControllerPane::arrangeDashboard(int width)
                         compact ? QSizePolicy::Fixed : QSizePolicy::Expanding);
     const int columns = compact ? 2 : 1;
     int index = 0;
-    for (auto* button : {dashboardMuteAllButton_, dashboardSoundOffButton_, dashboardPickUpButton_})
+    for (auto* button : {dashboardMuteAllButton_, dashboardSoundOffButton_})
     {
         actionsLayout_->removeWidget(button);
         actionsLayout_->addWidget(button, index / columns, index % columns);
@@ -1204,7 +1212,6 @@ void MeetingControllerPane::refreshActionTooltips()
         : uiaValue_->text() == "Unavailable" ? "unavailable" : "idle");
     uiaRefreshButton_->style()->unpolish(uiaRefreshButton_);
     uiaRefreshButton_->style()->polish(uiaRefreshButton_);
-    dashboardPickUpButton_->setToolTip(QStringLiteral("Pick up one or more Chrome meeting tabs."));
 }
 
 void MeetingControllerPane::updateMeetingCounts()
@@ -1225,6 +1232,8 @@ void MeetingControllerPane::refreshCollapseTitle()
     collapseButton_->setProperty("collapsed", meetingsCollapsed_);
     if (uiaRefreshButton_)
         uiaRefreshButton_->setVisible(!meetingsCollapsed_);
+    if (dashboardPickUpButton_)
+        dashboardPickUpButton_->setVisible(!meetingsCollapsed_);
     if (barLayout)
         barLayout->activate();
     if (meetingsCollapsed_)

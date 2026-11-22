@@ -12,7 +12,7 @@ From the repository root, run this command in PowerShell or Command Prompt.
 
 The command configures the root CMake project, compiles both features, deploys the Qt and Visual C++ runtimes, and runs the tests. Release builds also check caption latency. Launch `build\Release\MeetingHandler.exe`. To move the app, copy the entire Release folder.
 
-The build requires Visual Studio 2022 C++ tools with a Windows SDK, CMake 3.24 or newer, and a Qt 6 MSVC x64 kit with Widgets and Test. It discovers CMake on PATH or in Visual Studio. The default Qt kit is `C:\Qt\6.8.3\msvc2022_64`. Set `QT_MSVC_DIR` to use another installation. The same command accepts `Debug` as an optional argument for a debug build.
+The build requires Visual Studio 2022 C++ tools with a Windows SDK, CMake 3.24 or newer, and a Qt 6 MSVC x64 kit with Widgets, SVG, and Test. It discovers CMake on PATH or in Visual Studio. The default Qt kit is `C:\Qt\6.8.3\msvc2022_64`. Set `QT_MSVC_DIR` to use another installation. The same command accepts `Debug` as an optional argument for a debug build.
 
 ## Project layout
 

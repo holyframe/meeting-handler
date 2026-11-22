@@ -6,6 +6,8 @@
 #include <QFrame>
 #include <QFontDatabase>
 #include <QGridLayout>
+#include <QIcon>
+#include <QImage>
 #include <QJsonDocument>
 #include <QLabel>
 #include <QLineEdit>
@@ -848,6 +850,43 @@ private slots:
         QCOMPARE(spy.takeFirst().at(2).toString(), QString("Audio test meeting"));
     }
 
+    void importButtonCentersItsPlus_data()
+    {
+        QTest::addColumn<bool>("enabled");
+        QTest::addColumn<bool>("pressed");
+        QTest::newRow("normal") << true << false;
+        QTest::newRow("pressed") << true << true;
+        QTest::newRow("disabled") << false << false;
+    }
+
+    void importButtonCentersItsPlus()
+    {
+        QFETCH(bool, enabled);
+        QFETCH(bool, pressed);
+        MeetingControllerPane window;
+        window.show();
+        auto* button = window.dashboardPickUpButton_;
+        button->setEnabled(enabled);
+        button->setDown(pressed);
+        QCOMPARE(button->size(), QSize(24, 24));
+
+        const QImage rendered = button->grab().toImage();
+        button->setIcon(QIcon());
+        const QImage background = button->grab().toImage();
+        QRect plus;
+        for (int y = 0; y < rendered.height(); ++y) {
+            for (int x = 0; x < rendered.width(); ++x) {
+                if (rendered.pixel(x, y) != background.pixel(x, y))
+                    plus |= QRect(x, y, 1, 1);
+            }
+        }
+        QVERIFY(!plus.isEmpty());
+        const QPoint offset = plus.center() - rendered.rect().center();
+        const int tolerance = qCeil(rendered.devicePixelRatio());
+        QVERIFY(qAbs(offset.x()) <= tolerance);
+        QVERIFY(qAbs(offset.y()) <= tolerance);
+    }
+
     void meetingGridFollowsItsViewport()
     {
         MeetingControllerPane window;
@@ -875,11 +914,12 @@ private slots:
         const auto bounds = [&window](QWidget* widget) {
             return QRect(widget->mapTo(&window, QPoint()), widget->size());
         };
-        QTRY_VERIFY(bounds(window.dashboardPickUpButton_).bottom() < bounds(window.meetingsArea_).top());
-        QCOMPARE(bounds(window.dashboardMuteAllButton_).top(), bounds(window.dashboardSoundOffButton_).top());
-        QVERIFY(bounds(window.dashboardMuteAllButton_).bottom() < bounds(window.dashboardPickUpButton_).top());
+        QTRY_VERIFY(bounds(window.dashboardPickUpButton_).bottom() <= bounds(window.dashboardMuteAllButton_).top());
+        QTRY_VERIFY(bounds(window.dashboardPickUpButton_).bottom() <= bounds(window.dashboardSoundOffButton_).top());
+        QVERIFY(bounds(window.dashboardMuteAllButton_).top() <= bounds(window.dashboardSoundOffButton_).top());
         QVERIFY(bounds(window.uiaRefreshButton_).bottom() <= bounds(window.dashboardMuteAllButton_).top());
-        QVERIFY(bounds(window.uiaRefreshButton_).left() > bounds(window.collapseButton_).left());
+        QVERIFY(bounds(window.dashboardPickUpButton_).left() > bounds(window.collapseButton_).left());
+        QVERIFY(bounds(window.uiaRefreshButton_).left() > bounds(window.dashboardPickUpButton_).left());
         QCOMPARE(bounds(window.uiaRefreshButton_).width(), bounds(window.uiaRefreshButton_).height());
         for (auto* button : {window.dashboardMuteAllButton_, window.uiaRefreshButton_,
                              window.dashboardSoundOffButton_, window.dashboardPickUpButton_}) {
@@ -906,7 +946,7 @@ private slots:
         QTRY_COMPARE(window.meetingsArea_->horizontalScrollBar()->maximum(), 0);
         QTRY_VERIFY(window.meetingsArea_->verticalScrollBar()->maximum() > 0);
         window.resize(1500, 720);
-        QTRY_VERIFY(bounds(window.dashboardPickUpButton_).right() < bounds(window.meetingsArea_).left());
+        QTRY_VERIFY(bounds(window.dashboardSoundOffButton_).right() < bounds(window.meetingsArea_).left());
         QTRY_COMPARE(window.meetingsArea_->horizontalScrollBar()->maximum(), 0);
     }
 
@@ -959,10 +999,11 @@ private slots:
         const QPoint connection = origin(window.uiaRefreshButton_);
         const QPoint pickup = origin(window.dashboardPickUpButton_);
         QVERIFY(connection.y() < mute.y());
-        QVERIFY(connection.x() > origin(window.collapseButton_).x());
+        QVERIFY(pickup.y() < mute.y());
+        QVERIFY(pickup.x() > origin(window.collapseButton_).x());
+        QVERIFY(connection.x() > pickup.x());
         QVERIFY(mute.y() < soundOff.y());
-        QVERIFY(soundOff.y() < pickup.y());
-        QVERIFY(qAbs(mute.x() - pickup.x()) <= 2);
+        QVERIFY(qAbs(mute.x() - soundOff.x()) <= 2);
         QVERIFY(mute.x() < window.meetingsArea_->mapTo(&window, QPoint()).x());
         QCOMPARE(window.dashboardMuteAllButton_->findChild<QLabel*>("railCaption")->text(), QString("Mute all"));
         QVERIFY(window.findChild<QPushButton*>("railCountButton") == nullptr);
@@ -970,7 +1011,8 @@ private slots:
         QCOMPARE(window.uiaRefreshButton_->accessibleName(), QString("Connection status"));
         QCOMPARE(window.uiaRefreshButton_->width(), window.uiaRefreshButton_->height());
         QVERIFY(window.uiaRefreshButton_->findChild<QLabel*>("railIcon") == nullptr);
-        QCOMPARE(window.dashboardPickUpButton_->findChild<QLabel*>("railCaption")->text(), QString("Pick up tabs"));
+        QCOMPARE(window.dashboardPickUpButton_->accessibleName(), QString("Pick up meeting tabs"));
+        QVERIFY(window.dashboardPickUpButton_->findChild<QLabel*>("railCaption") == nullptr);
         QCOMPARE(window.meetingCountValue_->text(), QString("2/3"));
         QVERIFY(window.collapseButton_->text().contains(QStringLiteral("Meetings (2/3)")));
         QVERIFY(!window.uiaValue_->isVisible());

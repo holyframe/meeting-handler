@@ -30,6 +30,20 @@ QPushButton#collapseMeetingsButton[collapsed="true"] {
     padding: 0;
     text-align: center;
 }
+QPushButton#importMeetingTabsButton {
+    background: #454545;
+    border: 1px solid #6A6A6A;
+    border-radius: 6px;
+    padding: 0;
+    text-align: center;
+}
+QPushButton#importMeetingTabsButton:hover:enabled { background: #525252; }
+QPushButton#importMeetingTabsButton:pressed:enabled { background: #333333; }
+QPushButton#importMeetingTabsButton:focus:enabled { border-color: #D0D0D0; }
+QPushButton#importMeetingTabsButton:disabled {
+    background: #2E2E2E;
+    border-color: #454545;
+}
 QFrame#pageBar {
     background: #262626;
     border-bottom: 1px solid #4A4A4A;
@@ -71,8 +85,7 @@ QFrame#controllerRail {
 }
 QPushButton#railMuteButton,
 QPushButton#railCountButton,
-QPushButton#railSoundButton,
-QPushButton#railPickupButton {
+QPushButton#railSoundButton {
     font-family: "Segoe UI";
     font-size: 9pt;
     font-weight: 600;
@@ -127,19 +140,8 @@ QPushButton#railSoundButton QLabel#railCaption {
 }
 QPushButton#railCountButton:hover:enabled,
 QPushButton#railSoundButton:hover:enabled { background: #404040; }
-QPushButton#railPickupButton {
-    color: white;
-    background: #454545;
-    border: 1px solid #6A6A6A;
-}
-QPushButton#railPickupButton QLabel#railIcon,
-QPushButton#railPickupButton QLabel#railCaption {
-    color: white;
-}
-QPushButton#railPickupButton:hover:enabled { background: #525252; }
 QPushButton#railMuteButton:disabled,
-QPushButton#railSoundButton:disabled,
-QPushButton#railPickupButton:disabled {
+QPushButton#railSoundButton:disabled {
     color: #8A8A8A;
     background: #2E2E2E;
     border-color: #454545;
@@ -147,9 +149,7 @@ QPushButton#railPickupButton:disabled {
 QPushButton#railMuteButton:disabled QLabel#railIcon,
 QPushButton#railMuteButton:disabled QLabel#railCaption,
 QPushButton#railSoundButton:disabled QLabel#railIcon,
-QPushButton#railSoundButton:disabled QLabel#railCaption,
-QPushButton#railPickupButton:disabled QLabel#railIcon,
-QPushButton#railPickupButton:disabled QLabel#railCaption {
+QPushButton#railSoundButton:disabled QLabel#railCaption {
     color: #8A8A8A;
 }
 QFrame#metricCard {
