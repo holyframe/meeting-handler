@@ -8,6 +8,7 @@
 #include <QWidget>
 
 #include <functional>
+#include <optional>
 
 #include "captions/CaptureEngine.h"
 #include "captions/Settings.h"
@@ -16,10 +17,11 @@
 
 class CaptionTargetList;
 class CaptionView;
-class PingStatusDialog;
+class WindowPickOutline;
 class QBoxLayout;
 class QCheckBox;
 class QComboBox;
+class QShortcut;
 class QSplitter;
 class QToolButton;
 
@@ -42,6 +44,8 @@ signals:
     void logLine(const QString& text);
     void logToggled(bool visible);
     void audioMonitoringChanged(bool enabled);
+    void speakerVolumeStepRequested(bool increase);
+    void headerPaletteChanged(const QPalette& palette);
 
 protected:
     bool event(QEvent* event) override;
@@ -57,6 +61,7 @@ private:
     void createControls();
     QWidget* createFormattingBar();
     QWidget* createAudioControls(QWidget* toolbar);
+    void updateVolumeShortcuts();
     void restoreToolbarHeight();
     void ApplyTheme();
     void ApplyTypography();
@@ -77,10 +82,9 @@ private:
     void MaybeCopyRealtime();
     void discardPendingCaptions();
     void BeginWindowPick();
-    void UpdateWindowPick(POINT point, bool forceRefresh = false);
+    void UpdateWindowPick(bool forceRefresh = false);
     void FinishWindowPick(bool accept);
     void ShowWindowPickStatus(WebInputPickState state);
-    void UpdatePickOutline(HWND window);
 
     WebInputPicker m_webInputPicker;
     CaptureEngine m_engine;
@@ -99,11 +103,13 @@ private:
     WebInputPickState m_windowPickState = WebInputPickState::NoWindow;
     QTimer m_followTimer, m_pickTimer, m_hotkeyTimer, m_presentTimer;
     QElapsedTimer m_realtimeCopy;
-    PingStatusDialog* m_pingStatus = nullptr;
-    QWidget* m_pickOutline = nullptr;
+    WindowPickOutline* m_pickOutline = nullptr;
+    std::optional<POINT> m_pickReleasePoint;
     QWidget* m_targetSidebar = nullptr;
     QBoxLayout* m_toolbarGroups = nullptr;
     QThread m_audioThread;
+    QShortcut* m_volumeUp = nullptr;
+    QShortcut* m_volumeDown = nullptr;
     QSplitter* m_rows = nullptr;
     CaptionView* m_view = nullptr;
     QPointer<CaptionTargetList> m_targets;

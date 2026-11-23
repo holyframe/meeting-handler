@@ -1,4 +1,4 @@
-QWidget#captionSidebar, QWidget#captionToolbar, QWidget#captionTargets,
+QWidget#captionSidebar, QWidget#captionToolbar, QWidget#captionFormattingBar, QWidget#captionTargets,
 QWidget#targetViewport, QScrollArea#targetScroll { background: palette(alternate-base); }
 QSplitter::handle { background: palette(alternate-base); }
 QSplitter::handle:hover { background: palette(mid); }
@@ -11,6 +11,9 @@ QPushButton, QToolButton, QComboBox, QLineEdit {
 QPushButton:pressed, QToolButton:pressed, QToolButton:checked { background-color: palette(highlight); }
 QPushButton:focus, QToolButton:focus, QComboBox:focus, QLineEdit:focus { border-color: palette(text); }
 QToolButton { padding: 0; }
+QToolButton#showPingStatus { border: none; }
+QToolButton#showPingStatus:hover { background-color: palette(mid); }
+QToolButton#showPingStatus:focus { border: 1px solid palette(text); }
 QFrame#captionTargetTile { background: palette(button); border: 1px solid palette(mid); }
 QFrame#captionTargetTile[active="true"] { border-color: palette(text); }
 QFrame#captionTargetTile[removing="true"] { border-color: red; }
@@ -29,7 +32,14 @@ QToolButton#jumpToLatest:hover {
 }
 QToolButton#jumpToLatest:pressed { background: palette(highlight); }
 QCheckBox, QLabel { color: palette(window-text); }
+QWidget#windowsAudioControls QProgressBar {
+    background: palette(button);
+    border: none;
+    border-radius: 2px;
+}
+QWidget#windowsAudioControls QProgressBar::chunk { background: #25865f; border-radius: 2px; }
 QDialog { background-color: palette(window); }
+QPlainTextEdit#pingOutput { background: palette(base); color: palette(text); border: 1px solid palette(mid); }
 QComboBox QAbstractItemView, QFileDialog QAbstractItemView, QMenu {
     color: palette(text);
     background-color: palette(base);

@@ -2,6 +2,7 @@
 #include "CaptionTheme.h"
 
 #include <windows.h>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -134,6 +135,12 @@ bool ShowSettingsDialog(QWidget* owner, Settings& settings) {
     hotkeyRow->addWidget(change);
     form->addRow(QObject::tr("Hotkey"), hotkeyRow);
 
+    auto* volumeArrows = new QCheckBox(QObject::tr("Use Up and Down arrows for speaker volume"), &dialog);
+    volumeArrows->setObjectName("speakerVolumeArrowKeys");
+    volumeArrows->setToolTip(QObject::tr("Adjust Windows speaker volume while Meeting Handler is focused."));
+    volumeArrows->setChecked(settings.speakerVolumeArrowKeys);
+    form->addRow(volumeArrows);
+
     auto* folder = new QLineEdit(QString::fromStdWString(settings.ResolvedSaveFolder()), &dialog);
     folder->setObjectName("saveFolder");
     folder->setAccessibleName(QObject::tr("Save folder"));
@@ -165,5 +172,6 @@ bool ShowSettingsDialog(QWidget* owner, Settings& settings) {
     settings.saveFolder = folder->text().toStdWString();
     settings.hotkeyModifiers = hotkey->modifiers;
     settings.hotkeyVirtualKey = hotkey->key;
+    settings.speakerVolumeArrowKeys = volumeArrows->isChecked();
     return true;
 }

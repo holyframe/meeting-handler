@@ -43,5 +43,6 @@ bool IsSentenceEnd(std::wstring_view word);
 std::wstring DirectoryOf(const std::wstring& path);
 std::wstring ExecutablePath();
 std::wstring ExecutableDirectory();
+std::wstring SystemExecutablePath(std::wstring_view filename);
 
 }  // namespace util

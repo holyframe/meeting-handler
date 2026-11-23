@@ -10,6 +10,21 @@
 #include <QWidget>
 #include <utility>
 
+QString caption_theme::styleSheet(const QString& resource, const QPalette& palette) {
+    QFile file(resource);
+    if (!file.open(QIODevice::ReadOnly)) return {};
+    QString sheet = QString::fromUtf8(file.readAll());
+    // Resolve the chosen theme explicitly, including on children with their own style sheets.
+    for (const auto& [name, role] : {
+             std::pair{"window", QPalette::Window}, {"window-text", QPalette::WindowText},
+             {"alternate-base", QPalette::AlternateBase}, {"base", QPalette::Base},
+             {"button", QPalette::Button}, {"button-text", QPalette::ButtonText},
+             {"highlight", QPalette::Highlight}, {"text", QPalette::Text}, {"mid", QPalette::Mid}}) {
+        sheet.replace(QStringLiteral("palette(%1)").arg(QLatin1String(name)), palette.color(role).name());
+    }
+    return sheet;
+}
+
 void caption_theme::apply(QWidget* widget, UiTheme theme) {
     const auto system = qApp->styleHints()->colorScheme();
     const bool dark = theme == UiTheme::Dark || (theme == UiTheme::System &&
@@ -27,21 +42,7 @@ void caption_theme::apply(QWidget* widget, UiTheme theme) {
         palette.setColor(role, text);
         palette.setColor(QPalette::Disabled, role, dark ? QColor(155, 155, 155) : QColor(105, 105, 105));
     }
-    static const QString sheet = [] {
-        QFile file(":/captions.qss");
-        return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString{};
-    }();
-    // Qt resolves QSS palette() against the system palette for some child controls.
-    // Resolve these roles once so an explicit Light or Dark choice covers new children too.
-    QString themed = sheet;
-    for (const auto& [name, role] : {
-             std::pair{"window", QPalette::Window}, {"window-text", QPalette::WindowText},
-             {"alternate-base", QPalette::AlternateBase}, {"base", QPalette::Base},
-             {"button", QPalette::Button}, {"button-text", QPalette::ButtonText},
-             {"highlight", QPalette::Highlight}, {"text", QPalette::Text}, {"mid", QPalette::Mid}}) {
-        themed.replace(QStringLiteral("palette(%1)").arg(QLatin1String(name)), palette.color(role).name());
-    }
-    widget->setStyleSheet(themed);
+    widget->setStyleSheet(styleSheet(QStringLiteral(":/captions.qss"), palette));
     widget->setPalette(palette);
     widget->setAutoFillBackground(true);
     const BOOL darkTitle = dark;

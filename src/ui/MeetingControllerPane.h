@@ -35,6 +35,7 @@ public:
     bool meetingsCollapsed() const { return meetingsCollapsed_; }
     void setLogVisible(bool visible);
     void setMeetingsCollapsed(bool collapsed);
+    void setHeaderPalette(const QPalette& palette);
     void appendLog(const QString& message);
 
 signals:
@@ -125,7 +126,6 @@ private:
     void setStatusMessage(const QString& message);
     void updateUiaStatus(bool ready, const QString& message);
     quintptr selectedWindowHandle() const;
-    void applyDarkProfessionalTheme();
 
     QString statusMessage_;
     QString lastLog_;

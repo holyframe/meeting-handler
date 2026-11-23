@@ -1,4 +1,5 @@
 #include "MeetingControllerPane.h"
+#include "CaptionTheme.h"
 #include "MeetingAudioSummary.h"
 #include "windows/UiaWorker.h"
 
@@ -6,7 +7,6 @@
 
 #include <QApplication>
 #include <QCheckBox>
-#include <QFile>
 #include <QComboBox>
 #include <QCursor>
 #include <QDateTime>
@@ -78,9 +78,9 @@ MeetingControllerPane::MeetingControllerPane(QWidget* parent)
 
     collapseBar_ = new QFrame(this);
     collapseBar_->setObjectName("collapseBar");
-    collapseBar_->setFixedHeight(36);
+    collapseBar_->setFixedHeight(caption_theme::paneHeaderHeight);
     auto* barLayout = new QHBoxLayout(collapseBar_);
-    barLayout->setContentsMargins(8, 4, 8, 4);
+    barLayout->setContentsMargins(8, 0, 8, 0);
     barLayout->setSpacing(6);
     collapseButton_ = new QPushButton(collapseBar_);
     collapseButton_->setObjectName("collapseMeetingsButton");
@@ -228,7 +228,7 @@ MeetingControllerPane::MeetingControllerPane(QWidget* parent)
     connect(workerThread_, &QThread::finished,
             worker_, &QObject::deleteLater);
 
-    applyDarkProfessionalTheme();
+    setHeaderPalette(palette());
     setStatusMessage(
         "Ready · Pick up meeting tabs to read microphone and sound states");
     workerThread_->start();
@@ -1095,7 +1095,7 @@ void MeetingControllerPane::refreshCollapseTitle()
         collapseButton_->setText(QStringLiteral("\u25B6"));
         collapseButton_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
         if (barLayout)
-            barLayout->setContentsMargins(4, 4, 4, 4);
+            barLayout->setContentsMargins(4, 0, 4, 0);
         const int icon = qMax(16, collapseBar_->height() - 8);
         collapseButton_->setFixedSize(icon, icon);
         setFixedWidth(barLayout ? barLayout->sizeHint().width() : icon + 8);
@@ -1108,7 +1108,7 @@ void MeetingControllerPane::refreshCollapseTitle()
         collapseButton_->setMinimumSize(0, 0);
         collapseButton_->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
         if (barLayout)
-            barLayout->setContentsMargins(8, 4, 8, 4);
+            barLayout->setContentsMargins(8, 0, 8, 0);
     }
     collapseButton_->style()->unpolish(collapseButton_);
     collapseButton_->style()->polish(collapseButton_);
@@ -1735,9 +1735,7 @@ void MeetingControllerPane::appendLog(const QString& message)
     liveDiagnostics_->appendPlainText(QString("[%1] %2").arg(timestamp, message));
 }
 
-void MeetingControllerPane::applyDarkProfessionalTheme()
+void MeetingControllerPane::setHeaderPalette(const QPalette& palette)
 {
-    QFile style(":/controller.qss");
-    if (style.open(QIODevice::ReadOnly))
-        setStyleSheet(QString::fromUtf8(style.readAll()));
+    setStyleSheet(caption_theme::styleSheet(QStringLiteral(":/controller.qss"), palette));
 }

@@ -2,16 +2,19 @@
 #include "windows/WebInputPicker.h"
 
 #include <QFrame>
-#include <QHBoxLayout>
+#include <QGridLayout>
 #include <QImage>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QResizeEvent>
 #include <QStyle>
 #include <QToolButton>
 #include <QVBoxLayout>
 
 namespace {
+constexpr int kStackedTargetWidth = 136;
+
 HICON CopyWindowIcon(HWND window) {
     HICON icon = nullptr;
     const WPARAM sizes[] = {ICON_SMALL2, ICON_SMALL, ICON_BIG};
@@ -52,31 +55,48 @@ QFrame* CaptionTargetList::createTile() {
     tile->setMouseTracking(true);
     tile->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     tile->installEventFilter(this);
-    auto* row = new QHBoxLayout(tile);
+    auto* row = new QGridLayout(tile);
     row->setContentsMargins(4, 4, 4, 4);
     row->setSpacing(3);
+    row->setColumnStretch(1, 1);
     auto* icon = new QLabel(tile);
     icon->setObjectName("targetIcon");
     icon->setFixedSize(20, 20);
     icon->setAttribute(Qt::WA_TransparentForMouseEvents);
-    row->addWidget(icon, 0, Qt::AlignTop);
+    row->addWidget(icon, 0, 0, Qt::AlignLeft | Qt::AlignTop);
     auto* name = new QLabel(tile);
     name->setObjectName("targetName");
     name->setTextFormat(Qt::PlainText);
     name->setWordWrap(true);
     name->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     name->setAttribute(Qt::WA_TransparentForMouseEvents);
-    row->addWidget(name, 1);
     auto* close = new QToolButton(tile);
     close->setObjectName("closeTarget");
     close->setAccessibleName(tr("Remove target"));
     close->setToolTip(close->accessibleName());
     close->setText(QStringLiteral("×"));
     close->setFixedSize(16, 16);
-    row->addWidget(close);
+    row->addWidget(close, 0, 2, Qt::AlignRight | Qt::AlignTop);
+    placeName(tile);
     connect(close, &QToolButton::clicked, this, [this, tile] { closeTile(m_tiles.indexOf(tile)); });
     m_layout->addWidget(tile);
     return tile;
+}
+
+void CaptionTargetList::placeName(QFrame* tile) {
+    auto* grid = static_cast<QGridLayout*>(tile->layout());
+    auto* name = tile->findChild<QLabel*>("targetName");
+    grid->removeWidget(name);
+    if (width() < kStackedTargetWidth) grid->addWidget(name, 1, 0, 1, 3);
+    else grid->addWidget(name, 0, 1);
+}
+
+void CaptionTargetList::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    if ((event->oldSize().width() < kStackedTargetWidth) != (width() < kStackedTargetWidth)
+        || !event->oldSize().isValid()) {
+        for (auto* tile : m_tiles) placeName(tile);
+    }
 }
 
 void CaptionTargetList::Refresh() {

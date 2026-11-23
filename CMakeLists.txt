@@ -19,7 +19,7 @@ endif()
 add_library(meeting_handler_core STATIC
     src/ui/AudioLevelControl.cpp
     src/ui/MeetingHandlerWindow.cpp
-    src/ui/PingStatusDialog.cpp
+    src/ui/PingStatusPanel.cpp
     src/ui/CaptionPane.cpp
     src/ui/CaptionTheme.cpp
     src/ui/CaptionTargetList.cpp
@@ -27,6 +27,7 @@ add_library(meeting_handler_core STATIC
     src/ui/MeetingAudioSummary.cpp
     src/ui/MeetingControllerPane.cpp
     src/ui/SettingsDialog.cpp
+    src/ui/WindowPickOutline.cpp
     src/captions/CaptionMerger.cpp
     src/captions/CaptionSave.cpp
     src/captions/CaptionSource.cpp
@@ -51,7 +52,7 @@ set_target_properties(meeting_handler_core PROPERTIES AUTOMOC ON)
 target_include_directories(meeting_handler_core PUBLIC src resources)
 target_link_libraries(meeting_handler_core
     PUBLIC Qt6::Widgets
-    PRIVATE advapi32 dwmapi ole32 oleaut32 shell32 uiautomationcore user32 uuid
+    PRIVATE advapi32 dwmapi gdi32 ole32 oleaut32 shell32 uiautomationcore user32 uuid
 )
 qt_add_resources(meeting_handler_core application_assets
     PREFIX "/"

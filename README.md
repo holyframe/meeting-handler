@@ -2,6 +2,12 @@
 
 Meeting Handler is a C++20 Windows app. Its Qt Widgets window has three resizable columns. From left to right, these hold the caption targets, the meeting controls, and the live transcript with its toolbar. Collapsing Meetings gives the transcript more room. The toolbar opens the shared activity log below all three columns.
 
+Font, size, and line spacing sit above the transcript. Below it, the microphone icon shows the Windows input mute state. Click the speaker icon to mute or unmute playback. Each slider adjusts its device's volume, and the bar beneath it shows live audio activity.
+
+While the main window is focused, press **Up** or **Down** to adjust the default Windows speaker volume by one step. Hold a key to repeat. Text fields, lists, sliders, and menus keep their arrow-key navigation. The shortcut is enabled by default and can be turned off in **Settings → Use Up and Down arrows for speaker volume**.
+
+Drag the picker at the top of the Caption target sidebar onto a browser tab with an editable field. Selected tabs appear below the picker. The ping pane at the bottom opens and starts monitoring on every launch. Each `ping google.com -t` result shows bytes, round-trip time, and TTL. A dash marks an unavailable measurement. Click the thin three-dot divider to collapse the results and stop monitoring, or click it again to restart.
+
 ## Build and run
 
 From the repository root, run this command in PowerShell or Command Prompt.

@@ -197,4 +197,16 @@ std::wstring ExecutablePath() {
 
 std::wstring ExecutableDirectory() { return DirectoryOf(ExecutablePath()); }
 
+std::wstring SystemExecutablePath(std::wstring_view filename) {
+    const UINT capacity = ::GetSystemDirectoryW(nullptr, 0);
+    if (!capacity) return {};
+    std::wstring path(capacity, L'\0');
+    const UINT length = ::GetSystemDirectoryW(path.data(), capacity);
+    if (!length || length >= capacity) return {};
+    path.resize(length);
+    path += L'\\';
+    path.append(filename);
+    return path;
+}
+
 }  // namespace util

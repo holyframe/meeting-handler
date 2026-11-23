@@ -5,6 +5,7 @@
 #include "ui/CaptionTargetList.h"
 #include <QApplication>
 #include <QFrame>
+#include <QLabel>
 #include <QMouseEvent>
 #include <QPointer>
 #include <QTest>
@@ -12,6 +13,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <climits>
 #include <cstdio>
 
 struct WebInputPickerTestAccess {
@@ -206,7 +208,9 @@ void FreshDropPriority() {
         Until([&] { return !Access::PendingWindow(picker); });
         gate.Open();
     });
-    const auto state = picker.Inspect({-32000, -32000}, nullptr, true);
+    // Off-screen helpers can occupy negative coordinates. No window's
+    // exclusive right or bottom edge can extend past LONG_MAX.
+    const auto state = picker.Inspect({LONG_MAX, LONG_MAX}, nullptr, true);
     release.join();
     Check(state == WebInputPickState::NoWindow && calls == 1,
           "fresh drop supersedes queued previews and checks the actual release point");
@@ -271,6 +275,13 @@ void TargetListSelectionAndRemoval() {
         QObject::connect(&list, &CaptionTargetList::statusChanged, [&](const QString& value) { status = value; });
         first = list.findChild<QFrame*>("captionTargetTile");
         Check(first && first->isHidden(), "empty target list has a hidden tile");
+        const auto hasVisibleText = [&list] {
+            for (auto* label : list.findChildren<QLabel*>()) {
+                if (label->isVisibleTo(&list) && !label->text().isEmpty()) return true;
+            }
+            return false;
+        };
+        Check(!hasVisibleText(), "empty target list starts blank");
         Access::AddTestTabs(picker, reinterpret_cast<HWND>(parent.winId()));
         list.Refresh();
         parent.show();
@@ -278,6 +289,16 @@ void TargetListSelectionAndRemoval() {
         auto tiles = list.findChildren<QFrame*>("captionTargetTile");
         if (!first || tiles.size() != 2) { Check(false, "create two picked tab controls"); return; }
         auto* second = tiles.at(1);
+        auto* name = second->findChild<QLabel*>("targetName");
+        auto* icon = second->findChild<QLabel*>("targetIcon");
+        Check(name && name->isVisible() && name->text() == "Second tab", "picked target name is visible");
+        list.resize(72, list.height());
+        QCoreApplication::processEvents();
+        Check(name && icon && name->geometry().top() > icon->geometry().bottom()
+              && name->width() >= name->fontMetrics().horizontalAdvance("Second"),
+              "narrow sidebar gives the target name its own row");
+        list.resize(240, list.height());
+        QCoreApplication::processEvents();
         Check(second->accessibleName() == "Selected window: Second tab" &&
               second->geometry().top() > first->geometry().bottom(),
               "picked tabs have distinct controls in the saved order");
@@ -310,6 +331,7 @@ void TargetListSelectionAndRemoval() {
         QCoreApplication::sendEvent(first, &release);
         Check(picker.PickedCount() == 0 && first && first->isHidden(),
               "right-dragging outside removes the tab and leaves an empty list");
+        Check(!hasVisibleText(), "removing the last target leaves the list blank");
     }
     Check(first.isNull(), "destroying the list releases its child controls");
 }

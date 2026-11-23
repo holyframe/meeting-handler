@@ -70,6 +70,7 @@ void Settings::Load() {
     copyRealtime = ReadInt(L"CopyRealtime", copyRealtime ? 1 : 0, file) != 0;
     compactView  = ReadInt(L"CompactView", compactView ? 1 : 0, file) != 0;
     alwaysOnTop  = ReadInt(L"AlwaysOnTop", alwaysOnTop ? 1 : 0, file) != 0;
+    speakerVolumeArrowKeys = ReadInt(L"SpeakerVolumeArrowKeys", speakerVolumeArrowKeys ? 1 : 0, file) != 0;
 
     transcriptPath = ReadString(L"TranscriptPath", L"", file);
     saveFolder = ReadString(L"SaveFolder", L"", file);
@@ -116,6 +117,7 @@ void Settings::Save() const {
     WriteInt(L"CopyRealtime", copyRealtime ? 1 : 0, file);
     WriteInt(L"CompactView", compactView ? 1 : 0, file);
     WriteInt(L"AlwaysOnTop", alwaysOnTop ? 1 : 0, file);
+    WriteInt(L"SpeakerVolumeArrowKeys", speakerVolumeArrowKeys ? 1 : 0, file);
     WriteString(L"TranscriptPath", transcriptPath, file);
     WriteString(L"SaveFolder", saveFolder, file);
     WriteInt(L"PollIntervalMs", pollIntervalMs, file);

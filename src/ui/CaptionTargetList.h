@@ -20,9 +20,11 @@ signals:
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     QFrame* createTile();
+    void placeName(QFrame* tile);
     void closeTile(int index);
     void markActive();
     void updateRemoval(QFrame* tile, const QPoint& screenPoint);

@@ -3,12 +3,15 @@
 #include "CaptionTargetList.h"
 #include "CaptionTheme.h"
 #include "CaptionView.h"
-#include "PingStatusDialog.h"
+#include "PingStatusPanel.h"
 #include "SettingsDialog.h"
+#include "WindowPickOutline.h"
 #include "captions/CaptionSave.h"
 #include "resource.h"
 
-#include <dwmapi.h>
+#include <windowsx.h>
+#include <QAbstractItemView>
+#include <QAbstractSlider>
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
@@ -19,14 +22,17 @@
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QPainter>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSaveFile>
-#include <QScreen>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QScopedValueRollback>
+#include <QShortcut>
 #include <QSignalBlocker>
 #include <QSplitter>
 #include <QStyleHints>
@@ -36,6 +42,30 @@
 #include <utility>
 
 namespace {
+class PingDividerButton final : public QToolButton {
+public:
+    explicit PingDividerButton(QWidget* parent) : QToolButton(parent) {
+        setObjectName("showPingStatus");
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        setFixedHeight(caption_theme::splitterThickness);
+        setFocusPolicy(Qt::StrongFocus);
+        setCursor(Qt::PointingHandCursor);
+        setCheckable(true);
+    }
+
+protected:
+    void paintEvent(QPaintEvent* event) override {
+        QToolButton::paintEvent(event);
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(palette().buttonText());
+        const QPointF center = QRectF(rect()).center();
+        for (int offset : {-5, 0, 5})
+            painter.drawEllipse(center + QPointF(offset, 0), 1.2, 1.2);
+    }
+};
+
 CaptionSourceChoice ToSourceChoice(CaptionSourcePreference source) {
     return source == CaptionSourcePreference::ChromeLiveCaption
                ? CaptionSourceChoice::Chrome
@@ -58,21 +88,6 @@ void selectValue(QComboBox* combo, const QString& value) {
     combo->setCurrentText(value);
 }
 
-POINT nativeScreenPoint(QPoint global) {
-    auto* screen = QGuiApplication::screenAt(global);
-    if (screen) {
-        DEVMODEW mode{};
-        mode.dmSize = sizeof(mode);
-        if (::EnumDisplaySettingsW(reinterpret_cast<LPCWSTR>(screen->name().utf16()), ENUM_CURRENT_SETTINGS, &mode)) {
-            const QPoint delta = global - screen->geometry().topLeft();
-            return {mode.dmPosition.x + qRound(delta.x() * screen->devicePixelRatio()),
-                    mode.dmPosition.y + qRound(delta.y() * screen->devicePixelRatio())};
-        }
-    }
-    POINT point{};
-    ::GetCursorPos(&point);
-    return point;
-}
 }
 
 CaptionPane::CaptionPane(QWidget* targetSidebar, QWidget* parent,
@@ -82,6 +97,7 @@ CaptionPane::CaptionPane(QWidget* targetSidebar, QWidget* parent,
     setObjectName("captionPane");
     setMinimumHeight(175);
     createControls();
+    m_pickOutline = new WindowPickOutline(this);
     m_windowsCaptionStartTimer.setInterval(250);
     connect(&m_windowsCaptionStartTimer, &QTimer::timeout, this, [this] {
         if (m_windowsCaptions.windowOpen()) {
@@ -94,10 +110,7 @@ CaptionPane::CaptionPane(QWidget* targetSidebar, QWidget* parent,
     });
     m_followTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_followTimer, &QTimer::timeout, this, [this] { m_activeWindowFollower.Poll(); });
-    connect(&m_pickTimer, &QTimer::timeout, this, [this] {
-        POINT point{};
-        if (m_windowPickDrag && ::GetCursorPos(&point)) UpdateWindowPick(point);
-    });
+    connect(&m_pickTimer, &QTimer::timeout, this, [this] { UpdateWindowPick(); });
     m_hotkeyTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_hotkeyTimer, &QTimer::timeout, this, [this] {
         if (!HotkeyChordReleased()) return;
@@ -134,18 +147,17 @@ void CaptionPane::createControls() {
     layout->setSpacing(0);
     auto* sidebar = m_targetSidebar;
     sidebar->installEventFilter(this);
+    sidebar->setAccessibleName(tr("Caption targets"));
     auto* sideLayout = new QVBoxLayout(sidebar);
-    sideLayout->setContentsMargins(0, 8, 0, 8);
-    sideLayout->setSpacing(6);
-    auto* title = new QLabel(tr("Caption target"), sidebar);
-    title->setObjectName("captionTargetHeading");
-    title->setAlignment(Qt::AlignCenter);
-    title->setWordWrap(true);
-    sideLayout->addWidget(title);
+    sideLayout->setContentsMargins(0, 0, 0, 0);
+    sideLayout->setSpacing(0);
+    auto* pickerRow = new QHBoxLayout;
+    pickerRow->addStrut(caption_theme::paneHeaderHeight);
     m_pickButton = iconButton(sidebar, "pickCaptionTarget", tr("Pick up window"), 0xE78B);
-    m_pickButton->setFixedSize(32, 32);
+    m_pickButton->setFixedSize(caption_theme::headerControlHeight, caption_theme::headerControlHeight);
     m_pickButton->installEventFilter(this);
-    sideLayout->addWidget(m_pickButton, 0, Qt::AlignHCenter);
+    pickerRow->addWidget(m_pickButton, 0, Qt::AlignCenter);
+    sideLayout->addLayout(pickerRow);
     auto* targetScroll = new QScrollArea(sidebar);
     targetScroll->setObjectName("targetScroll");
     targetScroll->viewport()->setObjectName("targetViewport");
@@ -154,26 +166,25 @@ void CaptionPane::createControls() {
     targetScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_targets = new CaptionTargetList(m_webInputPicker);
     targetScroll->setWidget(m_targets);
-    sideLayout->addWidget(targetScroll, 1);
-    auto* ping = iconButton(sidebar, "showPingStatus", tr("Show ping status for google.com"), 0xE712);
-    ping->setFixedSize(32, 26);
-    ping->setFocusPolicy(Qt::StrongFocus);
-    sideLayout->addWidget(ping, 0, Qt::AlignHCenter);
-    connect(ping, &QToolButton::clicked, this, [this] {
-        if (!m_pingStatus) {
-            m_pingStatus = new PingStatusDialog(this);
-            caption_theme::apply(m_pingStatus, m_settings.theme);
-        }
-        m_pingStatus->showNormal();
-        m_pingStatus->raise();
-        m_pingStatus->activateWindow();
-    });
+    sideLayout->addWidget(targetScroll, 3);
+    auto* pingToggle = new PingDividerButton(sidebar);
+    sideLayout->addWidget(pingToggle);
+    auto* pingPanel = new PingStatusPanel(sidebar);
+    sideLayout->addWidget(pingPanel, 1);
+    const auto setPingExpanded = [pingToggle, pingPanel](bool expanded) {
+        pingPanel->setVisible(expanded);
+        const auto action = expanded ? tr("Hide ping status for google.com") : tr("Show ping status for google.com");
+        pingToggle->setAccessibleName(action);
+        pingToggle->setToolTip(action);
+    };
+    connect(pingToggle, &QToolButton::toggled, pingPanel, setPingExpanded);
+    pingToggle->setChecked(true);
     auto* formatting = createFormattingBar();
     layout->addWidget(formatting);
     m_rows = new QSplitter(Qt::Vertical, this);
     m_rows->setObjectName("captionRows");
     m_rows->setChildrenCollapsible(false);
-    m_rows->setHandleWidth(6);
+    m_rows->setHandleWidth(caption_theme::splitterThickness);
     layout->addWidget(m_rows, 1);
     m_view = new CaptionView;
     m_view->setMinimumHeight(80);
@@ -246,9 +257,9 @@ void CaptionPane::createControls() {
 QWidget* CaptionPane::createFormattingBar() {
     auto* bar = new QWidget(this);
     bar->setObjectName("captionFormattingBar");
-    bar->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    bar->setFixedHeight(caption_theme::paneHeaderHeight);
     auto* row = new QHBoxLayout(bar);
-    row->setContentsMargins(8, 4, 8, 4);
+    row->setContentsMargins(8, caption_theme::headerVerticalMargin, 8, caption_theme::headerVerticalMargin);
     row->setSpacing(6);
     const auto combo = [&](const char* name, const QString& label, const QString& accessibleName) {
         auto* title = new QLabel(label, bar);
@@ -256,7 +267,7 @@ QWidget* CaptionPane::createFormattingBar() {
         box->setObjectName(name);
         box->setAccessibleName(accessibleName);
         box->setToolTip(accessibleName);
-        box->setFixedHeight(23);
+        box->setFixedHeight(caption_theme::headerControlHeight);
         title->setBuddy(box);
         row->addWidget(title);
         row->addWidget(box);
@@ -291,6 +302,15 @@ QWidget* CaptionPane::createAudioControls(QWidget* toolbar) {
     audio->moveToThread(&m_audioThread);
     connect(&m_audioThread, &QThread::finished, audio, &QObject::deleteLater);
     connect(this, &CaptionPane::audioMonitoringChanged, audio, &WindowsAudioLevels::setMonitoring);
+    connect(this, &CaptionPane::speakerVolumeStepRequested, audio, &WindowsAudioLevels::stepSpeakerVolume);
+    const auto volumeShortcut = [this](Qt::Key key) {
+        return new QShortcut(QKeySequence(key), this, [this, key] {
+            emit speakerVolumeStepRequested(key == Qt::Key_Up);
+        }, Qt::WindowShortcut);
+    };
+    m_volumeUp = volumeShortcut(Qt::Key_Up);
+    m_volumeDown = volumeShortcut(Qt::Key_Down);
+    connect(qApp, &QApplication::focusChanged, this, &CaptionPane::updateVolumeShortcuts);
     connect(audio, &WindowsAudioLevels::writeFailed, this, [this, group](AudioEndpoint endpoint) {
         const QString message = endpoint == AudioEndpoint::Microphone
             ? tr("Windows could not apply the microphone change.") : tr("Windows could not apply the sound output change.");
@@ -309,9 +329,20 @@ QWidget* CaptionPane::createAudioControls(QWidget* toolbar) {
     return group;
 }
 
+void CaptionPane::updateVolumeShortcuts() {
+    auto* focus = QApplication::focusWidget();
+    const bool editingOrNavigating = qobject_cast<QComboBox*>(focus) || qobject_cast<QAbstractSlider*>(focus)
+        || qobject_cast<QAbstractItemView*>(focus) || qobject_cast<QLineEdit*>(focus)
+        || qobject_cast<QPlainTextEdit*>(focus);
+    const bool enabled = m_settings.speakerVolumeArrowKeys && !editingOrNavigating;
+    m_volumeUp->setEnabled(enabled);
+    m_volumeDown->setEnabled(enabled);
+}
+
 bool CaptionPane::initialize(const Settings& settings) {
     if (m_initialized) return true;
     m_settings = settings;
+    updateVolumeShortcuts();
     m_frame = reinterpret_cast<HWND>(window()->winId());
     if (!m_frame) return false;
     m_pressEnterCheck->setChecked(settings.pressEnter);
@@ -368,7 +399,7 @@ void CaptionPane::ApplyTheme() {
     m_view->setPalette(palette());
     m_targetSidebar->setStyleSheet(styleSheet());
     m_targetSidebar->setPalette(palette());
-    if (m_pingStatus) caption_theme::apply(m_pingStatus, m_settings.theme);
+    emit headerPaletteChanged(palette());
 }
 
 void CaptionPane::ApplyTypography() {
@@ -446,6 +477,11 @@ void CaptionPane::UpdateHotkeyRegistration() {
 
 bool CaptionPane::nativeEventFilter(const QByteArray&, void* message, qintptr* result) {
     const auto* msg = static_cast<MSG*>(message);
+    if (m_windowPickDrag && msg->message == WM_LBUTTONUP && ::GetAncestor(msg->hwnd, GA_ROOT) == m_frame) {
+        // Preserve the release location even if the pointer moves before Qt delivers the event.
+        POINT point{GET_X_LPARAM(msg->lParam), GET_Y_LPARAM(msg->lParam)};
+        if (::ClientToScreen(msg->hwnd, &point)) m_pickReleasePoint = point;
+    }
     if (msg->hwnd != m_frame) return false;
     if (msg->message == WM_HOTKEY && msg->wParam == HOTKEY_SEND) {
         QueueHotkeySend();
@@ -619,6 +655,7 @@ void CaptionPane::UpdateListeningButton() {
 void CaptionPane::OnSettings() {
     const auto previous = m_settings.captionSource;
     if (!ShowSettingsDialog(window(), m_settings)) return;
+    updateVolumeShortcuts();
     m_settings.Save();
     ApplyTheme();
     UpdateHotkeyRegistration();
@@ -669,12 +706,12 @@ bool CaptionPane::eventFilter(QObject* watched, QEvent* event) {
         return true;
     case QEvent::MouseMove:
         if (!m_windowPickDrag) return false;
-        UpdateWindowPick(nativeScreenPoint(static_cast<QMouseEvent*>(event)->globalPosition().toPoint()));
+        UpdateWindowPick();
         return true;
     case QEvent::MouseButtonRelease:
         if (!m_windowPickDrag || static_cast<QMouseEvent*>(event)->button() != Qt::LeftButton) return false;
-        if (m_pickOutline) m_pickOutline->hide();
-        UpdateWindowPick(nativeScreenPoint(static_cast<QMouseEvent*>(event)->globalPosition().toPoint()), true);
+        m_pickOutline->hide();
+        UpdateWindowPick(true);
         FinishWindowPick(true);
         return true;
     case QEvent::UngrabMouse:
@@ -688,6 +725,7 @@ bool CaptionPane::eventFilter(QObject* watched, QEvent* event) {
 void CaptionPane::BeginWindowPick() {
     if (m_windowPickDrag || m_windowPickUpdating) return;
     m_webInputPicker.ResetCandidate();
+    m_pickReleasePoint.reset();
     m_windowPickState = WebInputPickState::NoWindow;
     m_windowPickDrag = true;
     m_pickButton->setFocus();
@@ -698,8 +736,16 @@ void CaptionPane::BeginWindowPick() {
     SetStatus(L"Drag over a browser tab. Release when the cursor changes to a crosshair.");
 }
 
-void CaptionPane::UpdateWindowPick(POINT point, bool forceRefresh) {
+void CaptionPane::UpdateWindowPick(bool forceRefresh) {
     if (!m_windowPickDrag || m_windowPickUpdating) return;
+    POINT point{};
+    if (forceRefresh && m_pickReleasePoint) {
+        point = *m_pickReleasePoint;
+    } else if (!::GetCursorPos(&point)) {
+        m_windowPickState = WebInputPickState::NoWindow;
+        m_pickOutline->hide();
+        return;
+    }
     QScopedValueRollback guard(m_windowPickUpdating, true);
     const auto state = forceRefresh ? m_webInputPicker.Inspect(point, m_frame, true)
                                     : m_webInputPicker.Preview(point, m_frame);
@@ -707,8 +753,8 @@ void CaptionPane::UpdateWindowPick(POINT point, bool forceRefresh) {
     m_windowPickState = state;
     const bool valid = IsPickableState(state);
     QApplication::changeOverrideCursor(valid ? Qt::CrossCursor : Qt::ForbiddenCursor);
-    if (valid) UpdatePickOutline(m_webInputPicker.CandidateWindow());
-    else if (m_pickOutline) m_pickOutline->hide();
+    if (valid && !forceRefresh) m_pickOutline->showAround(m_webInputPicker.CandidateWindow());
+    else m_pickOutline->hide();
     ShowWindowPickStatus(state);
 }
 
@@ -716,7 +762,7 @@ void CaptionPane::FinishWindowPick(bool accept) {
     if (!m_windowPickDrag) return;
     m_windowPickDrag = false;
     m_pickTimer.stop();
-    if (m_pickOutline) m_pickOutline->hide();
+    m_pickOutline->hide();
     if (m_pickButton) {
         if (mouseGrabber() == m_pickButton) m_pickButton->releaseMouse();
         m_pickButton->setDown(false);
@@ -761,42 +807,5 @@ void CaptionPane::ShowWindowPickStatus(WebInputPickState state) {
         default:
             SetStatus(L"Drop unavailable: point at a visible browser or WebView window.");
             return;
-    }
-}
-
-void CaptionPane::UpdatePickOutline(HWND target) {
-    RECT bounds{};
-    MONITORINFOEXW monitor{};
-    monitor.cbSize = sizeof(monitor);
-    if (!target || !::GetMonitorInfoW(::MonitorFromWindow(target, MONITOR_DEFAULTTONEAREST), &monitor) ||
-        ((FAILED(::DwmGetWindowAttribute(target, DWMWA_EXTENDED_FRAME_BOUNDS, &bounds, sizeof(bounds))) ||
-          ::IsRectEmpty(&bounds)) && !::GetWindowRect(target, &bounds)) || ::IsRectEmpty(&bounds)) {
-        if (m_pickOutline) m_pickOutline->hide();
-        return;
-    }
-    QScreen* screen = this->screen();
-    for (auto* candidate : QGuiApplication::screens()) {
-        if (candidate->name().compare(QString::fromWCharArray(monitor.szDevice), Qt::CaseInsensitive) == 0) {
-            screen = candidate;
-            break;
-        }
-    }
-    if (!m_pickOutline) {
-        m_pickOutline = new QWidget(this, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint |
-            Qt::WindowTransparentForInput | Qt::WindowDoesNotAcceptFocus | Qt::NoDropShadowWindowHint);
-        m_pickOutline->setAttribute(Qt::WA_ShowWithoutActivating);
-        m_pickOutline->setStyleSheet("background: red;");
-    }
-    m_pickOutline->setScreen(screen);
-    const qreal scale = screen->devicePixelRatio();
-    const QPoint origin = screen->geometry().topLeft() + QPoint(qRound((bounds.left - monitor.rcMonitor.left) / scale),
-                                                                qRound((bounds.top - monitor.rcMonitor.top) / scale));
-    QRect frame(origin, QSize(qRound((bounds.right - bounds.left) / scale), qRound((bounds.bottom - bounds.top) / scale)));
-    frame.adjust(-3, -3, 3, 3);
-    if (m_pickOutline->geometry() != frame || !m_pickOutline->isVisible()) {
-        m_pickOutline->setGeometry(frame);
-        const auto rect = m_pickOutline->rect();
-        m_pickOutline->setMask(QRegion(rect).subtracted(QRegion(rect.adjusted(3, 3, -3, -3))));
-        m_pickOutline->show();
     }
 }

@@ -1,5 +1,6 @@
 #include "MeetingHandlerWindow.h"
 #include "CaptionPane.h"
+#include "CaptionTheme.h"
 #include "MeetingControllerPane.h"
 
 #include <QApplication>
@@ -19,22 +20,18 @@ MeetingHandlerWindow::MeetingHandlerWindow(const Settings& captionSettings, QSet
     auto* column = new QVBoxLayout(workspace);
     column->setContentsMargins(0, 0, 0, 0);
     column->setSpacing(0);
-    auto* dragStrip = new QWidget(workspace);
-    dragStrip->setObjectName("windowDragStrip");
-    dragStrip->setFixedHeight(28);
-    column->addWidget(dragStrip);
 
     columns_ = new QSplitter(Qt::Horizontal, workspace);
     columns_->setObjectName("workspaceColumns");
     columns_->setChildrenCollapsible(false);
-    columns_->setHandleWidth(6);
+    columns_->setHandleWidth(caption_theme::splitterThickness);
     auto* sidebar = new QWidget;
     sidebar->setObjectName("captionSidebar");
     sidebar->setMinimumWidth(56);
     columns_->addWidget(sidebar);
     controller_ = new MeetingControllerPane(columns_);
     columns_->addWidget(controller_);
-    auto* captions = new CaptionPane(sidebar, dragStrip, columns_);
+    auto* captions = new CaptionPane(sidebar, columns_);
     columns_->addWidget(captions);
     columns_->setStretchFactor(0, 0);
     columns_->setStretchFactor(1, 0);
@@ -61,6 +58,7 @@ MeetingHandlerWindow::MeetingHandlerWindow(const Settings& captionSettings, QSet
         setColumnWidths(columns_->sizes().first());
     });
     connect(captions, &CaptionPane::logLine, controller_, &MeetingControllerPane::appendLog);
+    connect(captions, &CaptionPane::headerPaletteChanged, controller_, &MeetingControllerPane::setHeaderPalette);
     connect(captions, &CaptionPane::logToggled, controller_, &MeetingControllerPane::setLogVisible);
     connect(controller_, &MeetingControllerPane::logVisibilityChanged, captions,
             &CaptionPane::setLogVisible);

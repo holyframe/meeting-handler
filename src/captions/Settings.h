@@ -24,6 +24,7 @@ struct Settings {
     bool         copyRealtime = false;
     bool         compactView  = false;
     bool         alwaysOnTop  = false;
+    bool         speakerVolumeArrowKeys = true;
     std::wstring transcriptPath;   // empty means "captions.txt" beside the exe
     // Folder used by the Save button. Empty means "script" beside the exe.
     std::wstring saveFolder;

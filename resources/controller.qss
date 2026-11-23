@@ -9,11 +9,11 @@ QWidget#appLogPanel {
     border-bottom: 1px solid #555555;
 }
 QFrame#collapseBar {
-    background: #262626;
-    border-top: 1px solid #4A4A4A;
+    background: palette(alternate-base);
+    border: none;
 }
 QPushButton#collapseMeetingsButton {
-    color: #E4E4E4;
+    color: palette(button-text);
     background: transparent;
     border: 1px solid transparent;
     border-radius: 6px;
@@ -24,7 +24,7 @@ QPushButton#collapseMeetingsButton {
     text-align: left;
 }
 QPushButton#collapseMeetingsButton:hover {
-    background: #3A3A3A;
+    background: palette(highlight);
 }
 QPushButton#collapseMeetingsButton[collapsed="true"] {
     padding: 0;
