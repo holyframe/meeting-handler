@@ -175,7 +175,13 @@ void verifyColumnsFit(QWidget* workspace) {
     verifyControlsFit(toolbar, {"sendCaption", "pressEnter", "toggleListening", "saveCaptions", "clearCaptions",
                                 "captionPreferences", "toggleActivityLog", "microphoneMute", "microphoneVolume",
                                 "microphonePeak", "microphonePercent", "speakerMute", "speakerVolume",
-                                "speakerPeak", "speakerPercent"});
+                                "speakerPeak", "speakerPercent", "microphoneDeviceName", "speakerDeviceName"});
+    for (const QString prefix : {QStringLiteral("microphone"), QStringLiteral("speaker")}) {
+        auto* name = toolbar->findChild<QLabel*>(prefix + "DeviceName");
+        auto* mute = toolbar->findChild<QToolButton*>(prefix + "Mute");
+        QVERIFY(name->parentWidget()->width() <= 180);
+        QVERIFY(boundsIn(name, toolbar).top() > boundsIn(mute, toolbar).bottom());
+    }
     QRect previous;
     for (const char* name : {"microphoneMute", "microphonePercent", "sendCaption", "pressEnter",
                              "speakerMute", "speakerPercent", "toggleListening", "saveCaptions",
@@ -571,8 +577,13 @@ private slots:
             mic.setLevels(kind, levels);
             speakers.setLevels(kind, levels);
         };
-        update(AudioEndpoint::Microphone, {"mic A", 63, 24, false});
-        update(AudioEndpoint::Speakers, {"output A", 31, 0, true});
+        auto* micName = mic.findChild<QLabel*>("microphoneDeviceName");
+        auto* speakerName = speakers.findChild<QLabel*>("speakerDeviceName");
+        QVERIFY(micName && speakerName);
+        update(AudioEndpoint::Microphone, {"mic A", 63, 24, false, "Desk mic"});
+        update(AudioEndpoint::Speakers, {"output A", 31, 0, true, "Headset"});
+        QCOMPARE(micName->text(), "Desk mic");
+        QCOMPARE(speakerName->text(), "Headset");
         QVERIFY(input->isEnabled() && output->isEnabled());
         QCOMPARE(input->value(), 63);
         QCOMPARE(output->value(), 31);
@@ -585,7 +596,9 @@ private slots:
         QCOMPARE(write.at(0).value<AudioEndpoint>(), AudioEndpoint::Microphone);
         QCOMPARE(write.at(1).toString(), "mic A");
         QCOMPARE(write.at(2).toInt(), 64);
-        update(AudioEndpoint::Microphone, {"mic A", 64, 79, false});
+        update(AudioEndpoint::Microphone, {"mic A", 64, 79, false, "Conference room USB microphone with a long device name"});
+        QVERIFY(micName->text().endsWith(QChar(0x2026)));
+        QCOMPARE(micName->toolTip(), "Conference room USB microphone with a long device name");
         QCOMPARE(percent->text(), "64%");
         QCOMPARE(meter->value(), 79);
         QVERIFY(inputWrites.isEmpty() && outputWrites.isEmpty());
@@ -600,12 +613,15 @@ private slots:
         QCOMPARE(outputWrite.at(2).toInt(), 37);
         input->setSliderDown(true);
         input->setSliderPosition(89);
-        update(AudioEndpoint::Microphone, {"mic B", 18, std::nullopt, false});
+        update(AudioEndpoint::Microphone, {"mic B", 18, std::nullopt, false, "Laptop mic"});
+        QCOMPARE(micName->text(), "Laptop mic");
         input->setSliderDown(false);
         QCOMPARE(input->value(), 18);
         QVERIFY(!meter->isEnabled());
         QVERIFY(inputWrites.isEmpty());
         update(AudioEndpoint::Microphone, {});
+        QCOMPARE(micName->accessibleName(), "Device unavailable");
+        QCOMPARE(speakerName->text(), "Headset");
         QVERIFY(!input->isEnabled() && output->isEnabled());
         QCOMPARE(percent->text(), QStringLiteral("—"));
         QVERIFY(inputWrites.isEmpty() && outputWrites.isEmpty());
@@ -735,7 +751,7 @@ private slots:
         listen->click();
         QCOMPARE(listen->accessibleName(), "Resume caption listening");
         QCoreApplication::postEvent(&pane, new CaptionUpdate(0, {L"Existing caption"}));
-        QTRY_VERIFY(!view->Empty());
+        QTRY_COMPARE(QString::fromStdWString(view->FullText()), QStringLiteral("Existing caption\r\n"));
         listen->click();
         QCOMPARE(listen->accessibleName(), "Stop caption listening");
         QCOMPARE(QString::fromStdWString(view->FullText()), QStringLiteral("Existing caption\r\n"));
@@ -868,7 +884,8 @@ private slots:
         verifyColumnsFit(window.centralWidget());
         auto* captions = window.findChild<CaptionPane*>();
         QVERIFY(captions);
-        QCOMPARE(captions->findChild<QSplitter*>("captionRows")->sizes().last(), settings.bottomPanelHeight);
+        auto* rows = captions->findChild<QSplitter*>("captionRows");
+        QCOMPARE(rows->sizes().last(), qMax(settings.bottomPanelHeight, rows->widget(1)->minimumSizeHint().height()));
         auto* view = captions->findChild<CaptionView*>();
         auto* save = captions->findChild<QToolButton*>("saveCaptions");
         auto* listen = captions->findChild<QToolButton*>("toggleListening");

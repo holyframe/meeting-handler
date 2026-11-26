@@ -207,11 +207,11 @@ void CaptionPane::createControls() {
     auto* send = new QPushButton(tr("Send"), toolbar);
     send->setObjectName("sendCaption");
     send->setFixedSize(92, 23);
-    sending->addWidget(send);
+    sending->addWidget(send, 0, Qt::AlignTop);
     m_pressEnterCheck = new QCheckBox(tr("Press Enter"), toolbar);
     m_pressEnterCheck->setObjectName("pressEnter");
     m_pressEnterCheck->setMinimumWidth(96);
-    sending->addWidget(m_pressEnterCheck);
+    sending->addWidget(m_pressEnterCheck, 0, Qt::AlignTop);
     auto* playback = new QHBoxLayout;
     playback->setSpacing(6);
     m_toolbarGroups->addLayout(playback);
@@ -223,7 +223,8 @@ void CaptionPane::createControls() {
     auto* settings = iconButton(toolbar, "captionPreferences", tr("Settings"), 0xE713);
     m_logButton = iconButton(toolbar, "toggleActivityLog", tr("Activity log"), 0xE7BA);
     m_logButton->setCheckable(true);
-    for (auto* button : {m_listenButton, save, clear, settings, m_logButton}) playback->addWidget(button);
+    for (auto* button : {m_listenButton, save, clear, settings, m_logButton})
+        playback->addWidget(button, 0, Qt::AlignTop);
     connectAudioControls(microphone, speakers);
     const auto margins = bottom->contentsMargins();
     const int toolbarMinWidth = qMax(sending->minimumSize().width(), playback->minimumSize().width())

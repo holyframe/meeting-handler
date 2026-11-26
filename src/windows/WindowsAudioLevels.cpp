@@ -40,6 +40,7 @@ bool isActiveMicrophone(const ComPtr<IMMDevice>& device) {
 
 struct Endpoint {
     QString id;
+    QString name;
     ComPtr<IAudioEndpointVolume> volume;
     ComPtr<IAudioMeterInformation> meter;
     AudioLevels lastPublished;
@@ -51,6 +52,7 @@ struct Endpoint {
             meter.Reset();
             id = nextId;
         }
+        name = id.isEmpty() ? QString{} : endpointName(device);
         if (id.isEmpty()) return;
         if (!volume) device->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr,
                                      reinterpret_cast<void**>(volume.GetAddressOf()));
@@ -61,6 +63,7 @@ struct Endpoint {
     AudioLevels read() {
         AudioLevels levels;
         levels.deviceId = id;
+        levels.deviceName = name;
         float scalar = 0;
         if (volume) {
             if (SUCCEEDED(volume->GetMasterVolumeLevelScalar(&scalar)))

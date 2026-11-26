@@ -1,6 +1,6 @@
 # Meeting Handler
 
-Meeting Handler is a C++20 Windows app. Its Qt Widgets window has three resizable columns. From left to right, these hold the caption targets, the meeting controls, and the live transcript with its toolbar. Collapsing Meetings shrinks the window and preserves both neighboring panes' widths. When maximized, the Caption Target sidebar takes the freed space. Click the five dots centered on the thin vertical splitter to expand Meetings. Drag the splitter above or below the dots to resize the sidebar and transcript. The toolbar opens the shared activity log below all three columns.
+Meeting Handler is a C++20 Windows app. Its Qt Widgets window has three resizable columns. From left to right, these hold the caption targets, the meeting controls, and the live transcript with its toolbar. Collapsing Meetings shrinks the window and preserves both neighboring panes' widths. When maximized, the Caption Target sidebar takes the freed space. Click the five dots centered on the thin vertical splitter to expand Meetings. Drag the splitter above or below the dots to resize the sidebar and transcript. The Log button on the transcript toolbar opens the shared activity log in a separate window.
 
 Font, size, and line spacing sit above the transcript. Below it, click the microphone icon to mute or unmute the selected Windows microphone. Click the speaker icon to mute or unmute playback. Each slider adjusts its device's volume, and the bar beneath it shows live audio activity.
 

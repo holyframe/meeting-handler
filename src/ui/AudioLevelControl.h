@@ -18,7 +18,11 @@ signals:
     void volumeRequested(AudioEndpoint endpoint, const QString& deviceId, int percent);
     void muteRequested(AudioEndpoint endpoint, const QString& deviceId, bool muted);
 
+protected:
+    void resizeEvent(QResizeEvent* event) override;
+
 private:
+    void updateDeviceLabel();
     void syncSlider();
     void syncMuteControl();
 
@@ -28,6 +32,7 @@ private:
     QString description_;
     QToolButton* muteButton_;
     QLabel* percent_;
+    QLabel* deviceLabel_;
     QSlider* slider_;
     QProgressBar* peak_;
 };

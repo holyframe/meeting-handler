@@ -13,8 +13,12 @@ AudioLevelControl::AudioLevelControl(AudioEndpoint endpoint, QWidget* parent)
     const bool mic = endpoint == AudioEndpoint::Microphone;
     const QString prefix = mic ? "microphone" : "speaker";
     description_ = mic ? tr("Windows microphone volume") : tr("Windows output volume");
-    auto* row = new QHBoxLayout(this);
-    row->setContentsMargins(0, 0, 0, 0);
+    setMaximumWidth(180);
+    auto* column = new QVBoxLayout(this);
+    column->setContentsMargins(0, 0, 0, 0);
+    column->setSpacing(2);
+    auto* row = new QHBoxLayout;
+    column->addLayout(row);
     row->setSpacing(4);
     muteButton_ = new QToolButton(this);
     muteButton_->setObjectName(prefix + "Mute");
@@ -56,6 +60,12 @@ AudioLevelControl::AudioLevelControl(AudioEndpoint endpoint, QWidget* parent)
     percent_->setMinimumWidth(fontMetrics().horizontalAdvance(tr("100%")));
     percent_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     row->addWidget(percent_);
+    deviceLabel_ = new QLabel(this);
+    deviceLabel_->setObjectName(prefix + "DeviceName");
+    deviceLabel_->setTextFormat(Qt::PlainText);
+    deviceLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    column->addWidget(deviceLabel_);
+    updateDeviceLabel();
 
     connect(slider_, &QSlider::sliderPressed, this, [this] { dragDeviceId_ = levels_.deviceId; });
     connect(slider_, &QSlider::sliderMoved, this, [this](int value) {
@@ -72,6 +82,19 @@ AudioLevelControl::AudioLevelControl(AudioEndpoint endpoint, QWidget* parent)
     });
     syncMuteControl();
     setLevels(endpoint_, {});
+}
+
+void AudioLevelControl::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    updateDeviceLabel();
+}
+
+void AudioLevelControl::updateDeviceLabel() {
+    const QString name = levels_.deviceId.isEmpty() ? tr("Device unavailable")
+        : levels_.deviceName.isEmpty() ? tr("Unnamed device") : levels_.deviceName;
+    deviceLabel_->setText(deviceLabel_->fontMetrics().elidedText(name, Qt::ElideRight, contentsRect().width()));
+    deviceLabel_->setToolTip(name);
+    deviceLabel_->setAccessibleName(name);
 }
 
 void AudioLevelControl::syncSlider() {
@@ -102,8 +125,10 @@ void AudioLevelControl::syncMuteControl() {
 
 void AudioLevelControl::setLevels(AudioEndpoint endpoint, const AudioLevels& levels) {
     if (endpoint != endpoint_) return;
+    const bool deviceChanged = levels.deviceId != levels_.deviceId || levels.deviceName != levels_.deviceName;
     const bool muteChanged = levels.deviceId != levels_.deviceId || levels.muted != levels_.muted;
     levels_ = levels;
+    if (deviceChanged) updateDeviceLabel();
     if (muteChanged) syncMuteControl();
     const bool available = levels.volumePercent.has_value();
     slider_->setEnabled(available);

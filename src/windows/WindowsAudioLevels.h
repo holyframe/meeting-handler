@@ -25,6 +25,7 @@ struct AudioLevels {
     std::optional<int> volumePercent;
     std::optional<int> peakPercent;
     std::optional<bool> muted;
+    QString deviceName;
     bool operator==(const AudioLevels&) const = default;
 };
 Q_DECLARE_METATYPE(AudioLevels)
