@@ -6,12 +6,15 @@
 #include <QRegion>
 
 namespace {
-bool placeAtFrame(HWND outline, const RECT& frame) {
+bool placeAtFrame(HWND outline, const RECT& frame, HWND target, bool followTargetStack) {
     RECT current{};
-    if (::GetWindowRect(outline, &current) && ::EqualRect(&current, &frame)) return true;
-    return ::SetWindowPos(outline, HWND_TOPMOST, frame.left, frame.top,
+    const bool inPlace = ::GetWindowRect(outline, &current) && ::EqualRect(&current, &frame);
+    HWND above = followTargetStack ? ::GetWindow(target, GW_HWNDPREV) : nullptr;
+    if (inPlace && (!followTargetStack || above == outline)) return true;
+    const UINT flags = SWP_NOACTIVATE | SWP_NOOWNERZORDER | (above == outline ? SWP_NOZORDER : 0);
+    return ::SetWindowPos(outline, above && above != outline ? above : HWND_TOPMOST, frame.left, frame.top,
                           frame.right - frame.left, frame.bottom - frame.top,
-                          SWP_NOACTIVATE | SWP_NOOWNERZORDER) != FALSE;
+                          flags) != FALSE;
 }
 }
 
@@ -21,15 +24,24 @@ WindowPickOutline::WindowPickOutline(QWidget* owner)
     setObjectName("captionTargetOutline");
     setAttribute(Qt::WA_ShowWithoutActivating);
     setAttribute(Qt::WA_TransparentForMouseEvents);
-    QPalette colors = palette();
-    colors.setColor(QPalette::Window, app_theme::pickerOutline);
-    setPalette(colors);
+    setAppearance(app_theme::pickerOutline, m_widthHundredths);
     setAutoFillBackground(true);
 }
 
-void WindowPickOutline::showAround(HWND target) {
+void WindowPickOutline::setAppearance(const QColor& color, int widthHundredths) {
+    m_widthHundredths = widthHundredths;
+    if (palette().color(QPalette::Window) != color) {
+        QPalette colors = palette();
+        colors.setColor(QPalette::Window, color);
+        setPalette(colors);
+    }
+}
+
+void WindowPickOutline::showAround(HWND target, bool followTargetStack) {
     RECT frame{};
+    DWORD cloaked = 0;
     if (!target || !::IsWindowVisible(target) || ::IsIconic(target) ||
+        (SUCCEEDED(::DwmGetWindowAttribute(target, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked) ||
         ((FAILED(::DwmGetWindowAttribute(target, DWMWA_EXTENDED_FRAME_BOUNDS, &frame, sizeof(frame))) ||
           ::IsRectEmpty(&frame)) && !::GetWindowRect(target, &frame)) || ::IsRectEmpty(&frame)) {
         hide();
@@ -39,19 +51,19 @@ void WindowPickOutline::showAround(HWND target) {
     // Both the browser frame and the top-level overlay use native desktop pixels.
     const auto outline = reinterpret_cast<HWND>(winId());
     const QSize size(frame.right - frame.left, frame.bottom - frame.top);
-    if (!placeAtFrame(outline, frame) || !setFrameRegion(outline, size)) {
+    if (!placeAtFrame(outline, frame, target, followTargetStack) || !setFrameRegion(outline, size)) {
         hide();
         return;
     }
     if (!isVisible()) {
         show();
         // Showing a Qt tool window can restore its previous placement.
-        if (!placeAtFrame(outline, frame)) hide();
+        if (!placeAtFrame(outline, frame, target, followTargetStack)) hide();
     }
 }
 
 bool WindowPickOutline::setFrameRegion(HWND outline, const QSize& size) {
-    const int border = qMax(1, ::MulDiv(3, ::GetDpiForWindow(outline), USER_DEFAULT_SCREEN_DPI));
+    const int border = qMax(1, ::MulDiv(m_widthHundredths, ::GetDpiForWindow(outline), 100 * USER_DEFAULT_SCREEN_DPI));
     if (isVisible() && size == m_regionSize && border == m_border) return true;
 
     // Shape the window in physical pixels. A fractional Qt scale must not round

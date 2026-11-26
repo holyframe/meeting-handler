@@ -4,6 +4,7 @@
 
 #include <windows.h>
 #include <QCheckBox>
+#include <QColorDialog>
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -15,8 +16,10 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QSlider>
 #include <QStyleHints>
 #include <QTimer>
+#include <QTabWidget>
 #include <QVBoxLayout>
 
 QString captionHotkeyName(unsigned modifiers, unsigned key) {
@@ -127,20 +130,146 @@ void populateMicrophones(QComboBox* combo, const QList<MicrophoneDevice>& device
 
 bool shortcutAvailable(HWND window, const HotkeyEdit* edit, unsigned previousModifiers, unsigned previousKey) {
     if (!edit->key || (edit->key == previousKey && edit->modifiers == previousModifiers)) return true;
-    // The app releases its two global shortcuts while Settings is open.
+    // The app releases its global shortcuts while Settings is open.
     constexpr int probeId = 1;
     if (!::RegisterHotKey(window, probeId, edit->modifiers | MOD_NOREPEAT, edit->key)) return false;
     ::UnregisterHotKey(window, probeId);
     return true;
 }
+
+QFormLayout* addFormPage(QTabWidget* tabs, const QString& title) {
+    auto* page = new QWidget(tabs);
+    auto* form = new QFormLayout(page);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    tabs->addTab(page, title);
+    return form;
+}
+
+struct ShortcutBinding {
+    HotkeyEdit* edit;
+    GlobalShortcut* value;
+};
+
+void addShortcut(QFormLayout* form, const QString& label, const QString& name,
+                 GlobalShortcut& value, QList<ShortcutBinding>& bindings) {
+    auto* page = form->parentWidget();
+    auto* edit = new HotkeyEdit(value.modifiers, value.key, page);
+    edit->setObjectName(name);
+    edit->setAccessibleName(label);
+    edit->setToolTip(QObject::tr("Press the keys for a global shortcut."));
+    auto* change = new QPushButton(QObject::tr("Change..."), page);
+    QObject::connect(change, &QPushButton::clicked, edit, [edit] { edit->setFocus(); });
+    auto* clear = new QPushButton(QObject::tr("Clear"), page);
+    clear->setObjectName(name + "Clear");
+    QObject::connect(clear, &QPushButton::clicked, edit, &HotkeyEdit::clearShortcut);
+    auto* row = new QHBoxLayout;
+    row->addWidget(edit, 1);
+    row->addWidget(change);
+    row->addWidget(clear);
+    form->addRow(label, row);
+    bindings.push_back({edit, &value});
+}
+
+void addOption(QFormLayout* form, const QString& text, const char* name, bool& value) {
+    auto* box = new QCheckBox(text, form->parentWidget());
+    box->setObjectName(name);
+    box->setChecked(value);
+    QObject::connect(box, &QCheckBox::toggled, box, [&value](bool on) { value = on; });
+    form->addRow(box);
+}
+
+void addWindowSlider(QFormLayout* form, const QString& label, const char* name, int& value,
+                     int minimum, int maximum, int divisor, const QString& unit, int reset = -1) {
+    auto* row = new QHBoxLayout;
+    auto* slider = new QSlider(Qt::Horizontal, form->parentWidget());
+    slider->setObjectName(name);
+    slider->setAccessibleName(label);
+    slider->setRange(minimum, maximum);
+    slider->setValue(value);
+    auto* readout = new QLabel(form->parentWidget());
+    const auto update = [&value, readout, divisor, unit](int n) {
+        value = n;
+        readout->setText(QString::number(double(n) / divisor, 'f', divisor == 1 ? 0 : 2) + unit);
+    };
+    update(value);
+    QObject::connect(slider, &QSlider::valueChanged, readout, update);
+    row->addWidget(slider, 1);
+    row->addWidget(readout);
+    if (reset >= 0) {
+        auto* button = new QPushButton(QObject::tr("Reset"), form->parentWidget());
+        button->setAccessibleName(QObject::tr("Reset border width"));
+        QObject::connect(button, &QPushButton::clicked, slider, [slider, reset] { slider->setValue(reset); });
+        row->addWidget(button);
+    }
+    form->addRow(label, row);
+}
+
+void addWindowsTop(QTabWidget* tabs, WindowsTopSettings& top, QList<ShortcutBinding>& bindings) {
+    auto* pin = addFormPage(tabs, QObject::tr("Always on Top"));
+    addShortcut(pin, QObject::tr("Pin or unpin window"), "windowPinHotkey",
+                top.shortcuts[size_t(WindowAction::Pin)], bindings);
+    addOption(pin, QObject::tr("Highlight pinned windows with a border"), "windowBorderEnabled", top.highlight);
+    addOption(pin, QObject::tr("Suspend pinning while a window is maximized"), "suspendPinWhenMaximized",
+              top.suspendWhenMaximized);
+    auto* colorRow = new QHBoxLayout;
+    auto* swatch = new QPushButton(pin->parentWidget());
+    swatch->setAccessibleName(QObject::tr("Border color"));
+    swatch->setObjectName("windowBorderColor");
+    auto setColor = [&top, swatch](QColor color) {
+        top.borderRgb = color.rgb() & 0xffffff;
+        QPixmap chip(20, 16);
+        chip.fill(color);
+        swatch->setIcon(QIcon(chip));
+        swatch->setText(color.name().toUpper());
+    };
+    setColor(QColor::fromRgb(top.borderRgb));
+    QObject::connect(swatch, &QPushButton::clicked, swatch, [&top, swatch, setColor] {
+        QColorDialog chooser(QColor::fromRgb(top.borderRgb), swatch);
+        chooser.setOption(QColorDialog::DontUseNativeDialog);
+        chooser.setWindowTitle(QObject::tr("Border color"));
+        if (chooser.exec() == QDialog::Accepted) setColor(chooser.selectedColor());
+    });
+    auto* reset = new QPushButton(QObject::tr("Reset"), pin->parentWidget());
+    reset->setAccessibleName(QObject::tr("Reset border color"));
+    QObject::connect(reset, &QPushButton::clicked, swatch, [setColor] {
+        setColor(QColor::fromRgb(WindowsTopSettings::defaultBorderRgb));
+    });
+    colorRow->addWidget(swatch);
+    colorRow->addStretch();
+    colorRow->addWidget(reset);
+    pin->addRow(QObject::tr("Border color"), colorRow);
+    addWindowSlider(pin, QObject::tr("Border width"), "windowBorderWidth", top.borderWidth,
+                    top.minBorderWidth, top.maxBorderWidth, 100, QObject::tr(" px"), top.defaultBorderWidth);
+
+    auto* pip = addFormPage(tabs, QObject::tr("PiP && Crop"));
+    addShortcut(pip, QObject::tr("Open or close preview"), "windowPipHotkey",
+                top.shortcuts[size_t(WindowAction::PictureInPicture)], bindings);
+    addShortcut(pip, QObject::tr("Crop preview"), "windowCropHotkey", top.shortcuts[size_t(WindowAction::Crop)], bindings);
+    addOption(pip, QObject::tr("Control the source window from the preview"), "interactivePreview", top.interactivePreview);
+    auto* help = new QLabel(QObject::tr("Choose Crop in the preview and drag over the area to keep. "
+                                        "Choose Show full to see the whole window again."));
+    help->setWordWrap(true);
+    pip->addRow(help);
+
+    auto* opacity = addFormPage(tabs, QObject::tr("Opacity"));
+    addShortcut(opacity, QObject::tr("Toggle window opacity"), "windowOpacityHotkey",
+                top.shortcuts[size_t(WindowAction::Opacity)], bindings);
+    addWindowSlider(opacity, QObject::tr("Default opacity"), "windowOpacityPercent", top.opacityPercent,
+                    top.minOpacity, 100, 1, QObject::tr("%"));
+    addOption(opacity, QObject::tr("Make the window fully opaque while the pointer is over it"),
+              "windowOpaqueOnHover", top.opaqueOnHover);
+}
 }
 
 bool ShowSettingsDialog(QWidget* owner, Settings& settings, WindowsAudioLevels& audio) {
+    WindowsTopSettings top = settings.windowsTop;
     QDialog dialog(owner);
     dialog.setObjectName("captionSettings");
     dialog.setWindowTitle(QObject::tr("Settings"));
-    auto* form = new QFormLayout(&dialog);
-    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* pages = new QTabWidget(&dialog);
+    layout->addWidget(pages);
+    auto* form = addFormPage(pages, QObject::tr("General"));
     auto* source = new QComboBox(&dialog);
     source->setObjectName("captionSource");
     source->addItems({QObject::tr("Windows 11 Live Captions"), QObject::tr("Chrome Live Caption")});
@@ -157,25 +286,10 @@ bool ShowSettingsDialog(QWidget* owner, Settings& settings, WindowsAudioLevels& 
     QObject::connect(qGuiApp->styleHints(), &QStyleHints::colorSchemeChanged, &dialog, applyTheme);
     applyTheme();
 
-    const auto addShortcut = [&](const QString& label, const QString& objectName, unsigned mods, unsigned key) {
-        auto* edit = new HotkeyEdit(mods, key, &dialog);
-        edit->setObjectName(objectName);
-        edit->setAccessibleName(label);
-        edit->setToolTip(QObject::tr("Press the keys for a global shortcut."));
-        auto* change = new QPushButton(QObject::tr("Change..."), &dialog);
-        QObject::connect(change, &QPushButton::clicked, edit, [edit] { edit->setFocus(); });
-        auto* clear = new QPushButton(QObject::tr("Clear"), &dialog);
-        clear->setObjectName(objectName + "Clear");
-        QObject::connect(clear, &QPushButton::clicked, edit, &HotkeyEdit::clearShortcut);
-        auto* row = new QHBoxLayout;
-        row->addWidget(edit, 1);
-        row->addWidget(change);
-        row->addWidget(clear);
-        form->addRow(label, row);
-        return edit;
-    };
-    auto* hotkey = addShortcut(QObject::tr("Send shortcut"), "sendHotkey",
-                               settings.hotkeyModifiers, settings.hotkeyVirtualKey);
+    QList<ShortcutBinding> bindings;
+    GlobalShortcut send{settings.hotkeyModifiers, settings.hotkeyVirtualKey};
+    GlobalShortcut mute{settings.microphoneHotkeyModifiers, settings.microphoneHotkeyVirtualKey};
+    addShortcut(form, QObject::tr("Send shortcut"), "sendHotkey", send, bindings);
 
     auto* microphone = new QComboBox(&dialog);
     microphone->setObjectName("microphoneDevice");
@@ -196,15 +310,7 @@ bool ShowSettingsDialog(QWidget* owner, Settings& settings, WindowsAudioLevels& 
     rescan.start(2000);
     QMetaObject::invokeMethod(&audio, &WindowsAudioLevels::listMicrophones, Qt::QueuedConnection);
 
-    auto* micHotkey = addShortcut(QObject::tr("Microphone mute shortcut"), "microphoneHotkey",
-                                  settings.microphoneHotkeyModifiers, settings.microphoneHotkeyVirtualKey);
-    auto* shortcutError = new QLabel(&dialog);
-    shortcutError->setObjectName("shortcutError");
-    shortcutError->setWordWrap(true);
-    shortcutError->hide();
-    form->addRow(shortcutError);
-    QObject::connect(hotkey, &QLineEdit::textChanged, shortcutError, &QWidget::hide);
-    QObject::connect(micHotkey, &QLineEdit::textChanged, shortcutError, &QWidget::hide);
+    addShortcut(form, QObject::tr("Microphone mute shortcut"), "microphoneHotkey", mute, bindings);
 
     auto* volumeArrows = new QCheckBox(QObject::tr("Use Up and Down arrows for speaker volume"), &dialog);
     volumeArrows->setObjectName("speakerVolumeArrowKeys");
@@ -232,35 +338,61 @@ bool ShowSettingsDialog(QWidget* owner, Settings& settings, WindowsAudioLevels& 
     folderRow->addWidget(browse);
     form->addRow(QObject::tr("Save folder"), folderRow);
     form->addRow(QString(), new QLabel(QObject::tr("Save creates a timestamped file named after the picked tab.")));
+    auto* windowPage = new QWidget(pages);
+    pages->addTab(windowPage, QObject::tr("WindowsTop"));
+    auto* windowLayout = new QVBoxLayout(windowPage);
+    windowLayout->addWidget(new QLabel(QObject::tr("These global shortcuts act on the foreground window."), windowPage));
+    auto* windowTabs = new QTabWidget(windowPage);
+    windowLayout->addWidget(windowTabs);
+    addWindowsTop(windowTabs, top, bindings);
+    auto* shortcutError = new QLabel(&dialog);
+    shortcutError->setObjectName("shortcutError");
+    shortcutError->setWordWrap(true);
+    shortcutError->hide();
+    layout->addWidget(shortcutError);
+    for (const auto& binding : bindings)
+        QObject::connect(binding.edit, &QLineEdit::textChanged, shortcutError, &QWidget::hide);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
         const auto window = reinterpret_cast<HWND>(dialog.winId());
-        if (micHotkey->key && micHotkey->key == hotkey->key && micHotkey->modifiers == hotkey->modifiers)
-            shortcutError->setText(QObject::tr("Choose different shortcuts for Send and microphone mute."));
-        else if (!shortcutAvailable(window, hotkey, settings.hotkeyModifiers, settings.hotkeyVirtualKey))
-            shortcutError->setText(QObject::tr("The Send shortcut is unavailable. Choose another shortcut."));
-        else if (!shortcutAvailable(window, micHotkey, settings.microphoneHotkeyModifiers, settings.microphoneHotkeyVirtualKey))
-            shortcutError->setText(QObject::tr("The microphone mute shortcut is unavailable. Choose another shortcut."));
-        else {
-            dialog.accept();
+        for (qsizetype i = 0; i < bindings.size(); ++i) {
+            const auto [edit, old] = bindings[i];
+            if (!edit->key) continue;
+            QString problem;
+            for (qsizetype j = 0; j < i; ++j) {
+                const auto* other = bindings[j].edit;
+                if (edit->key == other->key && edit->modifiers == other->modifiers)
+                    problem = QObject::tr("Choose different shortcuts for %1 and %2.")
+                                  .arg(other->accessibleName(), edit->accessibleName());
+            }
+            if (problem.isEmpty() && !shortcutAvailable(window, edit, old->modifiers, old->key))
+                problem = QObject::tr("%1 is unavailable. Choose another shortcut.").arg(edit->accessibleName());
+            if (problem.isEmpty()) continue;
+            pages->setCurrentWidget(windowPage->isAncestorOf(edit) ? windowPage : form->parentWidget());
+            if (windowPage->isAncestorOf(edit)) windowTabs->setCurrentWidget(edit->parentWidget());
+            edit->setFocus();
+            shortcutError->setText(problem);
+            shortcutError->show();
             return;
         }
-        shortcutError->show();
+        dialog.accept();
     });
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    form->addRow(buttons);
+    layout->addWidget(buttons);
     if (dialog.exec() != QDialog::Accepted) return false;
+    for (const auto& binding : bindings) *binding.value = {binding.edit->modifiers, binding.edit->key};
+    settings.windowsTop = top;
     settings.captionSource = source->currentIndex() == 1 ? CaptionSourcePreference::ChromeLiveCaption
                                                         : CaptionSourcePreference::WindowsLiveCaptions;
     settings.theme = static_cast<UiTheme>(theme->currentIndex());
     settings.saveFolder = folder->text().toStdWString();
-    settings.hotkeyModifiers = hotkey->modifiers;
-    settings.hotkeyVirtualKey = hotkey->key;
+    settings.hotkeyModifiers = send.modifiers;
+    settings.hotkeyVirtualKey = send.key;
     const auto selected = microphone->currentData().value<MicrophoneDevice>();
     settings.microphoneDeviceId = selected.id.toStdWString();
     settings.microphoneDeviceName = selected.name.toStdWString();
-    settings.microphoneHotkeyModifiers = micHotkey->modifiers;
-    settings.microphoneHotkeyVirtualKey = micHotkey->key;
+    settings.microphoneHotkeyModifiers = mute.modifiers;
+    settings.microphoneHotkeyVirtualKey = mute.key;
     settings.speakerVolumeArrowKeys = volumeArrows->isChecked();
     return true;
 }

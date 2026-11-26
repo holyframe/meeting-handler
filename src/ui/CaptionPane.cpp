@@ -88,9 +88,9 @@ void selectValue(QComboBox* combo, const QString& value) {
 }
 
 CaptionPane::CaptionPane(QWidget* targetSidebar, QWidget* parent,
-                         WindowsCaptionLauncher windowsCaptions)
+                         WindowsCaptionLauncher windowsCaptions, WindowsTop::DesktopWindows desktop)
     : QWidget(parent), m_windowsCaptions(std::move(windowsCaptions)),
-      m_targetSidebar(targetSidebar) {
+      m_windowsTop(std::move(desktop)), m_targetSidebar(targetSidebar) {
     setObjectName("captionPane");
     setMinimumHeight(175);
     createControls();
@@ -338,6 +338,7 @@ void CaptionPane::updateVolumeShortcuts() {
 bool CaptionPane::initialize(const Settings& settings) {
     if (m_initialized) return true;
     m_settings = settings;
+    m_windowsTop.configure(settings.windowsTop);
     emit microphoneDeviceSelected(QString::fromStdWString(settings.microphoneDeviceId));
     updateVolumeShortcuts();
     m_frame = reinterpret_cast<HWND>(window()->winId());
@@ -462,6 +463,10 @@ void CaptionPane::UnregisterHotkeys() {
     m_hotkeyTimer.stop();
     if (m_hotkeyRegistered) ::UnregisterHotKey(m_frame, HOTKEY_SEND);
     if (m_microphoneHotkeyRegistered) ::UnregisterHotKey(m_frame, HOTKEY_MICROPHONE_MUTE);
+    for (size_t i = 0; i < m_windowHotkeys.size(); ++i) {
+        if (m_windowHotkeys[i]) ::UnregisterHotKey(m_frame, HOTKEY_WINDOW_FIRST + int(i));
+        m_windowHotkeys[i] = false;
+    }
     m_hotkeyRegistered = false;
     m_microphoneHotkeyRegistered = false;
 }
@@ -477,6 +482,14 @@ void CaptionPane::UpdateHotkeyRegistration() {
         SetStatus(L"The Send hotkey is already in use by another app.");
     if (m_settings.microphoneHotkeyVirtualKey && !m_microphoneHotkeyRegistered)
         SetStatus(L"The microphone mute shortcut is unavailable. Choose another shortcut in Settings.");
+    for (size_t i = 0; i < m_windowHotkeys.size(); ++i) {
+        const auto chord = m_settings.windowsTop.shortcuts[i];
+        m_windowHotkeys[i] = chord.key &&
+            ::RegisterHotKey(m_frame, HOTKEY_WINDOW_FIRST + int(i), chord.modifiers | MOD_NOREPEAT, chord.key);
+        if (chord.key && !m_windowHotkeys[i])
+            emit logLine(tr("The %1 shortcut is unavailable. Choose another shortcut in Settings.")
+                         .arg(WindowsTop::actionName(static_cast<WindowAction>(i))));
+    }
 }
 
 bool CaptionPane::nativeEventFilter(const QByteArray&, void* message, qintptr* result) {
@@ -491,6 +504,15 @@ bool CaptionPane::nativeEventFilter(const QByteArray&, void* message, qintptr* r
         if (msg->wParam == HOTKEY_SEND) QueueHotkeySend();
         else if (msg->wParam == HOTKEY_MICROPHONE_MUTE && m_microphoneHotkeyRegistered)
             emit microphoneMuteToggleRequested();
+        else if (msg->wParam >= HOTKEY_WINDOW_FIRST && msg->wParam < HOTKEY_WINDOW_FIRST + windowActionCount) {
+            const auto index = msg->wParam - HOTKEY_WINDOW_FIRST;
+            if (!m_windowHotkeys[index]) return false;
+            const QString error = m_windowsTop.toggleForeground(static_cast<WindowAction>(index));
+            if (!error.isEmpty()) {
+                emit logLine(error);
+                QToolTip::showText(QCursor::pos(), error);
+            }
+        }
         else return false;
         if (result) *result = 0;
         return true;
@@ -667,6 +689,7 @@ void CaptionPane::OnSettings() {
         emit microphoneDeviceSelected(QString::fromStdWString(m_settings.microphoneDeviceId));
     UpdateHotkeyRegistration();
     if (!accepted) return;
+    m_windowsTop.configure(m_settings.windowsTop);
     updateVolumeShortcuts();
     m_settings.Save();
     ApplyTheme();

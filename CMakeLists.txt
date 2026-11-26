@@ -28,6 +28,8 @@ add_library(meeting_handler_core STATIC
     src/ui/MeetingControllerPane.cpp
     src/ui/SettingsDialog.cpp
     src/ui/WindowPickOutline.cpp
+    src/ui/WindowPreview.cpp
+    src/ui/WindowsTop.cpp
     src/captions/CaptionMerger.cpp
     src/captions/CaptionSave.cpp
     src/captions/CaptionSource.cpp
@@ -123,6 +125,16 @@ if(BUILD_TESTING)
     add_test(NAME workspace.stack COMMAND WorkspaceTests -platform windows
         -o -,txt -o workspace-results.xml,junitxml)
     set_tests_properties(workspace.stack PROPERTIES TIMEOUT 45)
+
+    add_executable(WindowsTopTests tests/WindowsTopTests.cpp "${app_resources}/app.rc")
+    set_target_properties(WindowsTopTests PROPERTIES AUTOMOC ON)
+    target_link_libraries(WindowsTopTests PRIVATE meeting_handler_core Qt6::Test)
+    if(MSVC)
+        target_link_options(WindowsTopTests PRIVATE /MANIFEST:NO)
+    endif()
+    add_test(NAME windows.windowstop COMMAND WindowsTopTests -platform windows
+        -o -,txt -o windowstop-results.xml,junitxml)
+    set_tests_properties(windows.windowstop PROPERTIES TIMEOUT 45)
 
     get_property(app_tests DIRECTORY PROPERTY TESTS)
     set_tests_properties(${app_tests} PROPERTIES

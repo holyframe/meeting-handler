@@ -14,6 +14,7 @@
 #include "captions/Settings.h"
 #include "windows/ActiveWindowFollower.h"
 #include "windows/WebInputPicker.h"
+#include "WindowsTop.h"
 
 class AudioLevelControl;
 class CaptionTargetList;
@@ -34,7 +35,8 @@ public:
         std::function<bool()> windowOpen = CaptionSource::WindowsLiveCaptionsWindowOpen;
         std::function<bool()> launch = CaptionSource::LaunchWindowsLiveCaptions;
     };
-    CaptionPane(QWidget* targetSidebar, QWidget* parent, WindowsCaptionLauncher windowsCaptions);
+    CaptionPane(QWidget* targetSidebar, QWidget* parent, WindowsCaptionLauncher windowsCaptions,
+                WindowsTop::DesktopWindows desktop = {});
     CaptionPane(QWidget* targetSidebar, QWidget* parent)
         : CaptionPane(targetSidebar, parent, {}) {}
     ~CaptionPane() override;
@@ -103,6 +105,8 @@ private:
     bool m_restoreToolbar = true;
     bool m_hotkeyRegistered = false;
     bool m_microphoneHotkeyRegistered = false;
+    WindowsTop m_windowsTop;
+    std::array<bool, windowActionCount> m_windowHotkeys{};
     bool m_windowPickDrag = false;
     bool m_windowPickUpdating = false;
     WebInputPickState m_windowPickState = WebInputPickState::NoWindow;

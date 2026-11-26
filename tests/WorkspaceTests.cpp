@@ -841,8 +841,14 @@ private slots:
                 auto* microphone = dialog->findChild<QComboBox*>("microphoneDevice");
                 auto* mute = dialog->findChild<QLineEdit*>("microphoneHotkey");
                 auto* arrows = dialog->findChild<QCheckBox*>("speakerVolumeArrowKeys");
+                auto* pin = dialog->findChild<QLineEdit*>("windowPinHotkey");
+                auto* border = dialog->findChild<QSlider*>("windowBorderWidth");
+                auto* opacity = dialog->findChild<QSlider*>("windowOpacityPercent");
+                auto* hover = dialog->findChild<QCheckBox*>("windowOpaqueOnHover");
+                auto* controlPreview = dialog->findChild<QCheckBox*>("interactivePreview");
                 fieldsFound = source && theme && hotkey && arrows && arrows->isChecked() && microphone && mute &&
-                              microphone->currentText() == "Windows default" && mute->text() == "None";
+                              microphone->currentText() == "Windows default" && mute->text() == "None" &&
+                              pin && border && opacity && hover && controlPreview;
                 if (fieldsFound) {
                     for (auto* button : dialog->findChildren<QAbstractButton*>())
                         fieldsFound = fieldsFound && button->cursor().shape() ==
@@ -855,6 +861,11 @@ private slots:
                     arrows->setChecked(false);
                     QTest::keyClick(hotkey, Qt::Key_F8, Qt::ControlModifier | Qt::AltModifier);
                     QTest::keyClick(mute, Qt::Key_F9, Qt::ControlModifier | Qt::ShiftModifier);
+                    QTest::keyClick(pin, Qt::Key_F11, Qt::AltModifier | Qt::ShiftModifier);
+                    border->setValue(307);
+                    opacity->setValue(53);
+                    hover->setChecked(true);
+                    controlPreview->setChecked(false);
                     emit audio.microphonesListed({{"usb-a", "USB headset"}, {"usb-b", "USB headset"}});
                     microphone->setCurrentIndex(2);
                     emit audio.microphonesListed({{"usb-a", "USB headset"}});
@@ -872,6 +883,9 @@ private slots:
         QCOMPARE(settings.theme, UiTheme::Dark);
         QCOMPARE(settings.hotkeyVirtualKey, 0U);
         QCOMPARE(settings.microphoneHotkeyVirtualKey, 0U);
+        QCOMPARE(settings.windowsTop.borderWidth, WindowsTopSettings::defaultBorderWidth);
+        QCOMPARE(settings.windowsTop.shortcuts[size_t(WindowAction::Pin)].key, 0U);
+        QVERIFY(!settings.windowsTop.opaqueOnHover && settings.windowsTop.interactivePreview);
         QVERIFY(settings.microphoneDeviceId.empty());
         QVERIFY(settings.speakerVolumeArrowKeys);
         QVERIFY(editSettings(true));
@@ -883,6 +897,11 @@ private slots:
         QCOMPARE(savedSettings.microphoneDeviceName, std::wstring(L"Desk headset"));
         QCOMPARE(savedSettings.microphoneHotkeyVirtualKey, unsigned(VK_F9));
         QCOMPARE(savedSettings.microphoneHotkeyModifiers, unsigned(MOD_CONTROL | MOD_SHIFT));
+        QCOMPARE(savedSettings.windowsTop.shortcuts[size_t(WindowAction::Pin)].key, unsigned(VK_F11));
+        QCOMPARE(savedSettings.windowsTop.shortcuts[size_t(WindowAction::Pin)].modifiers, unsigned(MOD_ALT | MOD_SHIFT));
+        QCOMPARE(savedSettings.windowsTop.borderWidth, 307);
+        QCOMPARE(savedSettings.windowsTop.opacityPercent, 53);
+        QVERIFY(savedSettings.windowsTop.opaqueOnHover && !savedSettings.windowsTop.interactivePreview);
         QCOMPARE(savedSettings.captionSource, CaptionSourcePreference::ChromeLiveCaption);
         QVERIFY(!savedSettings.speakerVolumeArrowKeys);
         QCOMPARE(settings.theme, UiTheme::Light);

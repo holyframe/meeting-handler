@@ -14,6 +14,7 @@
 #include <QSlider>
 #include <QStyle>
 #include <QStyleHints>
+#include <QTabBar>
 #include <QToolButton>
 #include <utility>
 
@@ -69,13 +70,14 @@ QString styleSheet(const QPalette& palette) {
 
 void updateControlCursor(QWidget* widget) {
     if (qobject_cast<QAbstractButton*>(widget) || qobject_cast<QSlider*>(widget) ||
-        qobject_cast<QComboBox*>(widget)) {
+        qobject_cast<QComboBox*>(widget) || qobject_cast<QTabBar*>(widget)) {
         widget->setCursor(widget->isEnabled() ? Qt::PointingHandCursor : Qt::ArrowCursor);
     }
 }
 
 void updateTitleBar(QWidget* widget) {
-    if (!widget->windowHandle() || (widget->windowType() != Qt::Window && widget->windowType() != Qt::Dialog)) return;
+    if (!widget->windowHandle() || (widget->windowType() != Qt::Window && widget->windowType() != Qt::Dialog &&
+        widget->windowType() != Qt::Tool)) return;
     const BOOL dark = darkPalette(widget->palette());
     ::DwmSetWindowAttribute(reinterpret_cast<HWND>(widget->winId()),
                             DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));

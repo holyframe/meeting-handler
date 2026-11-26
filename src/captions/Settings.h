@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <string>
 
 enum class CaptionSourcePreference {
@@ -13,6 +14,29 @@ enum class UiTheme {
     System,
 };
 
+enum class WindowAction : size_t { Pin, PictureInPicture, Crop, Opacity, Count };
+inline constexpr size_t windowActionCount = static_cast<size_t>(WindowAction::Count);
+
+struct GlobalShortcut {
+    unsigned modifiers = 0;
+    unsigned key = 0;
+};
+
+struct WindowsTopSettings {
+    static constexpr unsigned defaultBorderRgb = 0x999999;
+    static constexpr int defaultBorderWidth = 300; // Hundredths of a device-independent pixel.
+    static constexpr int minBorderWidth = 50, maxBorderWidth = 2000;
+    static constexpr int minOpacity = 10;
+    bool highlight = true;
+    bool suspendWhenMaximized = false;
+    unsigned borderRgb = defaultBorderRgb;
+    int borderWidth = defaultBorderWidth;
+    bool interactivePreview = true;
+    int opacityPercent = 62;
+    bool opaqueOnHover = false;
+    std::array<GlobalShortcut, windowActionCount> shortcuts{};
+};
+
 // Simple INI-backed preferences stored next to the executable.
 struct Settings {
     CaptionSourcePreference captionSource = CaptionSourcePreference::WindowsLiveCaptions;
@@ -24,6 +48,7 @@ struct Settings {
     bool         copyRealtime = false;
     bool         compactView  = false;
     bool         alwaysOnTop  = false;
+    WindowsTopSettings windowsTop;
     bool         speakerVolumeArrowKeys = true;
     // An empty device ID follows the Windows default recording device.
     std::wstring microphoneDeviceId;

@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cstdlib>
 
 #include "Util.h"
@@ -9,6 +10,8 @@
 namespace {
 
 constexpr const wchar_t* kSection = L"LiveCaptionView";
+constexpr std::array<const wchar_t*, windowActionCount> windowShortcutKeys{
+    L"PinWindow", L"PictureInPicture", L"CropPreview", L"WindowOpacity"};
 
 std::wstring ReadString(const wchar_t* key, const std::wstring& fallback,
                         const std::wstring& file) {
@@ -70,6 +73,21 @@ void Settings::Load() {
     copyRealtime = ReadInt(L"CopyRealtime", copyRealtime ? 1 : 0, file) != 0;
     compactView  = ReadInt(L"CompactView", compactView ? 1 : 0, file) != 0;
     alwaysOnTop  = ReadInt(L"AlwaysOnTop", alwaysOnTop ? 1 : 0, file) != 0;
+    auto& top = windowsTop;
+    top.highlight = ReadInt(L"WindowBorderEnabled", top.highlight, file) != 0;
+    top.suspendWhenMaximized = ReadInt(L"SuspendPinWhenMaximized", top.suspendWhenMaximized, file) != 0;
+    top.borderRgb = ReadInt(L"WindowBorderRGB", top.borderRgb, file) & 0xffffff;
+    top.borderWidth = std::clamp(ReadInt(L"WindowBorderWidth100", top.borderWidth, file),
+                                 top.minBorderWidth, top.maxBorderWidth);
+    top.interactivePreview = ReadInt(L"InteractivePreview", top.interactivePreview, file) != 0;
+    top.opacityPercent = std::clamp(ReadInt(L"WindowOpacityPercent", top.opacityPercent, file), top.minOpacity, 100);
+    top.opaqueOnHover = ReadInt(L"WindowOpaqueOnHover", top.opaqueOnHover, file) != 0;
+    for (size_t i = 0; i < windowShortcutKeys.size(); ++i) {
+        const std::wstring prefix(windowShortcutKeys[i]);
+        const int key = ReadInt((prefix + L"Key").c_str(), 0, file);
+        const unsigned mods = ReadInt((prefix + L"Modifiers").c_str(), 0, file) & 0xf;
+        top.shortcuts[i] = key > 0 && key <= 255 ? GlobalShortcut{mods, unsigned(key)} : GlobalShortcut{};
+    }
     speakerVolumeArrowKeys = ReadInt(L"SpeakerVolumeArrowKeys", speakerVolumeArrowKeys ? 1 : 0, file) != 0;
     microphoneDeviceId = ReadString(L"MicrophoneDeviceId", L"", file);
     microphoneDeviceName = ReadString(L"MicrophoneDeviceName", L"", file);
@@ -121,6 +139,19 @@ void Settings::Save() const {
     WriteInt(L"CopyRealtime", copyRealtime ? 1 : 0, file);
     WriteInt(L"CompactView", compactView ? 1 : 0, file);
     WriteInt(L"AlwaysOnTop", alwaysOnTop ? 1 : 0, file);
+    const auto& top = windowsTop;
+    WriteInt(L"WindowBorderEnabled", top.highlight, file);
+    WriteInt(L"SuspendPinWhenMaximized", top.suspendWhenMaximized, file);
+    WriteInt(L"WindowBorderRGB", top.borderRgb, file);
+    WriteInt(L"WindowBorderWidth100", top.borderWidth, file);
+    WriteInt(L"InteractivePreview", top.interactivePreview, file);
+    WriteInt(L"WindowOpacityPercent", top.opacityPercent, file);
+    WriteInt(L"WindowOpaqueOnHover", top.opaqueOnHover, file);
+    for (size_t i = 0; i < windowShortcutKeys.size(); ++i) {
+        const std::wstring prefix(windowShortcutKeys[i]);
+        WriteInt((prefix + L"Key").c_str(), top.shortcuts[i].key, file);
+        WriteInt((prefix + L"Modifiers").c_str(), top.shortcuts[i].modifiers, file);
+    }
     WriteInt(L"SpeakerVolumeArrowKeys", speakerVolumeArrowKeys ? 1 : 0, file);
     WriteString(L"MicrophoneDeviceId", microphoneDeviceId, file);
     WriteString(L"MicrophoneDeviceName", microphoneDeviceName, file);

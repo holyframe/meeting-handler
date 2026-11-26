@@ -6,10 +6,12 @@
 class WindowPickOutline final : public QWidget {
 public:
     explicit WindowPickOutline(QWidget* owner);
-    void showAround(HWND target);
+    void setAppearance(const QColor& color, int widthHundredths);
+    void showAround(HWND target, bool followTargetStack = false);
 
 private:
     bool setFrameRegion(HWND outline, const QSize& size);
     QSize m_regionSize;
     int m_border = 0;
+    int m_widthHundredths = 300;
 };

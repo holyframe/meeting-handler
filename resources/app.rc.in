@@ -4,7 +4,7 @@
 // Embed the application manifest (common controls v6 + per-monitor DPI).
 CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "@app_resources@/app.manifest"
 
-IDI_APPICON ICON "icons/captions.ico"
+IDI_APPICON ICON "icons/meeting-handler.ico"
 
 VS_VERSION_INFO VERSIONINFO
     FILEVERSION     @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
@@ -19,7 +19,7 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
-            VALUE "FileDescription", "Meeting Handler - Live Caption and Meeting Controller"
+            VALUE "FileDescription", "Meeting Handler"
             VALUE "FileVersion",     "@PROJECT_VERSION@.0"
             VALUE "CompanyName",     "Vela Innovation Technology LLC"
             VALUE "LegalCopyright",  "Copyright (C) Vela Innovation Technology LLC"

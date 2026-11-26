@@ -8,6 +8,14 @@ In **Settings → Microphone**, choose a recording device by name or select **Wi
 
 While the main window is focused, press **Up** or **Down** to adjust the default Windows speaker volume by one step. Hold a key to repeat. Text fields, lists, sliders, and menus keep their arrow-key navigation. The shortcut is enabled by default and can be turned off in **Settings → Use Up and Down arrows for speaker volume**.
 
+Open **Settings → WindowsTop** to assign global shortcuts. Each shortcut acts on the foreground window while Meeting Handler is running. The four shortcuts start unassigned.
+
+- **Always on Top** pins or unpins a window. Set its border color and width, turn the border off, or suspend pinning while the window is maximized.
+- **PiP & Crop** opens a movable, resizable live preview. Use **Crop** or its shortcut and drag over the area to keep. **Esc** cancels the selection and **Show full** restores the entire view. With interactive previews enabled, clicking the preview acts on the source window and gives it keyboard focus. Restore a minimized source to resume the preview.
+- **Opacity** toggles the chosen opacity for a window. Enable the hover option to make it fully opaque while the pointer is over it.
+
+The same shortcut reverses pinning, opacity, or PiP. Closing Meeting Handler restores the windows it was managing.
+
 Drag the picker at the top of the Caption target sidebar onto a browser tab with an editable field. Selected tabs appear below the picker. The ping pane at the bottom opens and starts monitoring on every launch. Each `ping google.com -t` result shows bytes, round-trip time, and TTL. A dash marks an unavailable measurement. Click the thin three-dot divider to collapse the results and stop monitoring, or click it again to restart.
 
 ## Build and run
