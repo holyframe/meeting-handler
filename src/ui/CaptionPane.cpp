@@ -199,29 +199,34 @@ void CaptionPane::createControls() {
     m_toolbarGroups = new QBoxLayout(QBoxLayout::LeftToRight);
     m_toolbarGroups->setSpacing(6);
     bottom->addLayout(m_toolbarGroups);
-    auto* actions = new QHBoxLayout;
-    actions->setSpacing(6);
-    m_toolbarGroups->addLayout(actions, 1);
+    auto* sending = new QHBoxLayout;
+    sending->setSpacing(6);
+    m_toolbarGroups->addLayout(sending);
+    auto* microphone = new AudioLevelControl(AudioEndpoint::Microphone, toolbar);
+    sending->addWidget(microphone, 1);
     auto* send = new QPushButton(tr("Send"), toolbar);
     send->setObjectName("sendCaption");
     send->setFixedSize(92, 23);
-    actions->addWidget(send);
+    sending->addWidget(send);
     m_pressEnterCheck = new QCheckBox(tr("Press Enter"), toolbar);
     m_pressEnterCheck->setObjectName("pressEnter");
     m_pressEnterCheck->setMinimumWidth(96);
-    actions->addWidget(m_pressEnterCheck);
+    sending->addWidget(m_pressEnterCheck);
+    auto* playback = new QHBoxLayout;
+    playback->setSpacing(6);
+    m_toolbarGroups->addLayout(playback);
+    auto* speakers = new AudioLevelControl(AudioEndpoint::Speakers, toolbar);
+    playback->addWidget(speakers, 1);
     m_listenButton = iconButton(toolbar, "toggleListening", tr("Stop caption listening"), 0xE71A);
     auto* save = iconButton(toolbar, "saveCaptions", tr("Save captions"), 0xE74E);
     auto* clear = iconButton(toolbar, "clearCaptions", tr("Clear captions"), 0xE74D);
     auto* settings = iconButton(toolbar, "captionPreferences", tr("Settings"), 0xE713);
-    m_logButton = iconButton(toolbar, "toggleActivityLog", tr("Log"), 0xE7BA);
+    m_logButton = iconButton(toolbar, "toggleActivityLog", tr("Activity log"), 0xE7BA);
     m_logButton->setCheckable(true);
-    for (auto* button : {m_listenButton, save, clear, settings, m_logButton}) actions->addWidget(button);
-    actions->addStretch();
-    auto* audio = createAudioControls(toolbar);
-    m_toolbarGroups->addWidget(audio, 0, Qt::AlignRight);
+    for (auto* button : {m_listenButton, save, clear, settings, m_logButton}) playback->addWidget(button);
+    connectAudioControls(microphone, speakers);
     const auto margins = bottom->contentsMargins();
-    const int toolbarMinWidth = qMax(actions->minimumSize().width(), audio->minimumSizeHint().width())
+    const int toolbarMinWidth = qMax(sending->minimumSize().width(), playback->minimumSize().width())
                                 + margins.left() + margins.right();
     setMinimumWidth(qMax(toolbarMinWidth, formatting->minimumSizeHint().width()));
     toolbar->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
@@ -291,13 +296,7 @@ QWidget* CaptionPane::createFormattingBar() {
     return bar;
 }
 
-QWidget* CaptionPane::createAudioControls(QWidget* toolbar) {
-    auto* group = new QWidget(toolbar);
-    group->setObjectName("windowsAudioControls");
-    group->setAccessibleName(tr("Windows audio levels"));
-    auto* row = new QHBoxLayout(group);
-    row->setContentsMargins(0, 0, 0, 0);
-    row->setSpacing(12);
+void CaptionPane::connectAudioControls(AudioLevelControl* microphone, AudioLevelControl* speakers) {
     m_audio = new WindowsAudioLevels;
     m_audio->moveToThread(&m_audioThread);
     connect(&m_audioThread, &QThread::finished, m_audio, &QObject::deleteLater);
@@ -313,22 +312,20 @@ QWidget* CaptionPane::createAudioControls(QWidget* toolbar) {
     m_volumeUp = volumeShortcut(Qt::Key_Up);
     m_volumeDown = volumeShortcut(Qt::Key_Down);
     connect(qApp, &QApplication::focusChanged, this, &CaptionPane::updateVolumeShortcuts);
-    connect(m_audio, &WindowsAudioLevels::writeFailed, this, [this, group](AudioEndpoint endpoint) {
+    connect(m_audio, &WindowsAudioLevels::writeFailed, this, [this, microphone, speakers](AudioEndpoint endpoint) {
         const QString message = endpoint == AudioEndpoint::Microphone
             ? tr("Windows could not apply the microphone change.") : tr("Windows could not apply the sound output change.");
         emit logLine(message);
-        if (group->isVisible()) QToolTip::showText(group->mapToGlobal(QPoint()), message, group);
+        auto* control = endpoint == AudioEndpoint::Microphone ? microphone : speakers;
+        if (control->isVisible()) QToolTip::showText(control->mapToGlobal(QPoint()), message, control);
     });
-    for (auto endpoint : {AudioEndpoint::Microphone, AudioEndpoint::Speakers}) {
-        auto* control = new AudioLevelControl(endpoint, group);
-        row->addWidget(control);
+    for (auto* control : {microphone, speakers}) {
         connect(m_audio, &WindowsAudioLevels::levelsChanged, control, &AudioLevelControl::setLevels);
         connect(control, &AudioLevelControl::volumeRequested, m_audio, &WindowsAudioLevels::setVolume);
         connect(control, &AudioLevelControl::muteRequested, m_audio, &WindowsAudioLevels::setMuted);
     }
     m_audioThread.setObjectName("Windows audio levels");
     m_audioThread.start();
-    return group;
 }
 
 void CaptionPane::updateVolumeShortcuts() {

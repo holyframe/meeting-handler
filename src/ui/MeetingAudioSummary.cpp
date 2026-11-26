@@ -66,14 +66,16 @@ void MeetingAudioSummary::setMeetings(const QList<ManagedMeeting>& meetings)
 
 void MeetingAudioSummary::updateMeeting(int row, const ManagedMeeting& meeting)
 {
-    const auto setCell = [this, row](Column column, const QString& text, const QBrush& color = {}) {
+    const bool unmuted = meeting.microphone == ManagedMeeting::Microphone::Unmuted;
+    const auto setCell = [this, row, unmuted](Column column, const QString& text, const QBrush& color = {}) {
         auto* cell = item(row, column);
         if (!cell) {
             cell = new QTableWidgetItem;
             setItem(row, column, cell);
         }
         cell->setText(text);
-        cell->setForeground(color);
+        cell->setBackground(unmuted ? QBrush(QColor("#861E2B")) : QBrush());
+        cell->setForeground(unmuted ? QBrush(Qt::white) : color);
         return cell;
     };
 
@@ -96,7 +98,7 @@ void MeetingAudioSummary::updateMeeting(int row, const ManagedMeeting& meeting)
         setCell(Microphone, tr("Muted"), QColor("#86DCA4"));
         break;
     case ManagedMeeting::Microphone::Unmuted:
-        setCell(Microphone, tr("Unmuted"), QColor("#FFD178"));
+        setCell(Microphone, tr("Unmuted"));
         break;
     case ManagedMeeting::Microphone::AudioNotConnected:
         setCell(Microphone, tr("Disconnected"));

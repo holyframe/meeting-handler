@@ -11,6 +11,7 @@
 #include <QStringList>
 
 class QComboBox;
+class QDialog;
 class QFrame;
 class QGridLayout;
 class QLabel;
@@ -31,7 +32,6 @@ public:
     explicit MeetingControllerPane(QWidget* parent = nullptr);
     ~MeetingControllerPane() override;
     const QString& statusMessage() const { return statusMessage_; }
-    QWidget* logPanel() const { return logPanel_; }
     bool meetingsCollapsed() const { return meetingsCollapsed_; }
     void setLogVisible(bool visible);
     void setMeetingsCollapsed(bool collapsed);
@@ -95,7 +95,7 @@ protected:
 
 private:
     QWidget* createDashboardPage();
-    QWidget* createDiagnosticsPage();
+    QDialog* createLogWindow();
 
     QFrame* createMeetingCard(const ManagedMeeting& meeting);
     void refreshMeetingCards();
@@ -143,7 +143,7 @@ private:
     QWidget* batchRow_ = nullptr;
     QWidget* collapseBar_ = nullptr;
     QPushButton* collapseButton_ = nullptr;
-    QWidget* logPanel_ = nullptr;
+    QDialog* logWindow_ = nullptr;
     bool meetingsCollapsed_ = false;
 
     QPushButton* dashboardPickUpButton_ = nullptr;

@@ -15,6 +15,7 @@
 #include "windows/ActiveWindowFollower.h"
 #include "windows/WebInputPicker.h"
 
+class AudioLevelControl;
 class CaptionTargetList;
 class CaptionView;
 class WindowPickOutline;
@@ -63,7 +64,7 @@ protected:
 private:
     void createControls();
     QWidget* createFormattingBar();
-    QWidget* createAudioControls(QWidget* toolbar);
+    void connectAudioControls(AudioLevelControl* microphone, AudioLevelControl* speakers);
     void updateVolumeShortcuts();
     void restoreToolbarHeight();
     void ApplyTheme();

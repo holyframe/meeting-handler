@@ -92,10 +92,6 @@ MeetingHandlerWindow::MeetingHandlerWindow(const Settings& captionSettings, QSet
     columns_->setStretchFactor(1, 0);
     columns_->setStretchFactor(2, 1);
     column->addWidget(columns_, 1);
-    auto* log = controller_->logPanel();
-    log->setParent(workspace);
-    log->setStyleSheet(controller_->styleSheet());
-    column->addWidget(log, 1);
     setCentralWidget(workspace);
     if (layout.value("meetingsCollapsed").toBool())
         controller_->setMeetingsCollapsed(true);
@@ -176,7 +172,7 @@ void MeetingHandlerWindow::updateMinimumWidth() {
     const int meetingsMin = controller_->meetingsCollapsed() ? 0 : controller_->minimumWidth();
     const int columnsMinimum = columns_->widget(0)->minimumWidth() + meetingsMin
         + columns_->widget(2)->minimumWidth() + splitterHandlesWidth();
-    setMinimumWidth(qMax(columnsMinimum, controller_->logPanel()->minimumSizeHint().width()));
+    setMinimumWidth(columnsMinimum);
 }
 
 int MeetingHandlerWindow::maximizedSidebarExtra() const {

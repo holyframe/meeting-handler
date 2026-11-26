@@ -164,6 +164,15 @@ QFrame#meetingCardActive[hovered="true"] {
     background: #3C3C3C;
     border: 1px solid #9A9A9A;
 }
+QFrame#meetingCard[unmuted="true"],
+QFrame#meetingCardActive[unmuted="true"] {
+    background: #861E2B;
+    border-color: #DB7783;
+}
+QFrame#meetingCard[unmuted="true"][hovered="true"],
+QFrame#meetingCardActive[unmuted="true"][hovered="true"] {
+    border-color: #FFD6DB;
+}
 QFrame#meetingCard[dropHover="true"],
 QFrame#meetingCardActive[dropHover="true"] {
     border: 2px dashed #A0A0A0;

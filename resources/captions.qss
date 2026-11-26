@@ -11,6 +11,10 @@ QPushButton, QToolButton, QComboBox, QLineEdit {
 QPushButton:pressed, QToolButton:pressed, QToolButton:checked { background-color: palette(highlight); }
 QPushButton:focus, QToolButton:focus, QComboBox:focus, QLineEdit:focus { border-color: palette(text); }
 QToolButton { padding: 0; }
+QToolButton#microphoneMute:enabled:checked, QToolButton#speakerMute:enabled:checked {
+    background-color: #a32434;
+    color: white;
+}
 QToolButton#showPingStatus { border: none; }
 QToolButton#showPingStatus:hover { background-color: palette(mid); }
 QToolButton#showPingStatus:focus { border: 1px solid palette(text); }
@@ -32,12 +36,12 @@ QToolButton#jumpToLatest:hover {
 }
 QToolButton#jumpToLatest:pressed { background: palette(highlight); }
 QCheckBox, QLabel { color: palette(window-text); }
-QWidget#windowsAudioControls QProgressBar {
+QWidget#captionToolbar QProgressBar {
     background: palette(button);
     border: none;
     border-radius: 2px;
 }
-QWidget#windowsAudioControls QProgressBar::chunk { background: #25865f; border-radius: 2px; }
+QWidget#captionToolbar QProgressBar::chunk { background: #25865f; border-radius: 2px; }
 QDialog { background-color: palette(window); }
 QPlainTextEdit#pingOutput { background: palette(base); color: palette(text); border: 1px solid palette(mid); }
 QWidget#pingStatusPanel[warning="true"],

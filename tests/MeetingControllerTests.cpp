@@ -809,6 +809,26 @@ private slots:
         skipped.tabRuntimeId = "skipped";
         window.meetings_.append(skipped);
         window.refreshMeetingCards();
+        window.show();
+        QCoreApplication::processEvents();
+        const QColor unmutedRed("#861E2B");
+        const auto verifyHighlight = [&](int row, bool expected) {
+            auto* card = window.meetingCards_.at(row);
+            QCOMPARE(card->grab(QRect(card->width() / 2, 5, 1, 1)).toImage().pixelColor(0, 0) == unmutedRed, expected);
+            auto* table = window.audioSummary_;
+            for (int col = 0; col < table->columnCount(); ++col) {
+                const QRect cell = table->visualItemRect(table->item(row, col));
+                const QImage pixels = table->viewport()->grab(cell).toImage();
+                int redPixels = 0;
+                for (int y = 0; y < pixels.height(); ++y)
+                    for (int x = 0; x < pixels.width(); ++x)
+                        if (pixels.pixelColor(x, y) == unmutedRed) ++redPixels;
+                QCOMPARE(redPixels > pixels.width() * pixels.height() / 2, expected);
+            }
+        };
+        verifyHighlight(0, true);
+        verifyHighlight(1, false);
+        verifyHighlight(2, true);
 
         QSignalSpy started(window.batch_, &MeetingBatch::meetingStarted);
         QSignalSpy results(window.batch_, &MeetingBatch::meetingFinished);
@@ -840,6 +860,8 @@ private slots:
         QCOMPARE(window.meetings_.first().sound, mute ? ManagedMeeting::Sound::On : ManagedMeeting::Sound::Off);
         QCOMPARE(window.meetings_.last().sound, skipped.sound);
         QCOMPARE(window.meetings_.last().microphone, skipped.microphone);
+        verifyHighlight(0, false);
+        verifyHighlight(2, true);
         QVERIFY(window.statusMessage().contains(mute ? "1 muted, 1 already muted"
                                                                   : "1 turned off, 1 already off"));
         QVERIFY(window.statusMessage().contains("0 failed, 1 skipped"));

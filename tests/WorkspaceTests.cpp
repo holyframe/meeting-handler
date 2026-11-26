@@ -2,6 +2,7 @@
 #include "ui/MeetingControllerPane.h"
 #include "ui/AudioLevelControl.h"
 #include "ui/CaptionPane.h"
+#include "ui/CaptionTheme.h"
 #include "ui/CaptionView.h"
 #include "ui/PingStatusPanel.h"
 #include "ui/SettingsDialog.h"
@@ -175,6 +176,15 @@ void verifyColumnsFit(QWidget* workspace) {
                                 "captionPreferences", "toggleActivityLog", "microphoneMute", "microphoneVolume",
                                 "microphonePeak", "microphonePercent", "speakerMute", "speakerVolume",
                                 "speakerPeak", "speakerPercent"});
+    QRect previous;
+    for (const char* name : {"microphoneMute", "microphonePercent", "sendCaption", "pressEnter",
+                             "speakerMute", "speakerPercent", "toggleListening", "saveCaptions",
+                             "clearCaptions", "captionPreferences", "toggleActivityLog"}) {
+        const QRect next = boundsIn(toolbar->findChild<QWidget*>(name), toolbar);
+        QVERIFY2(previous.isEmpty() || next.top() > previous.bottom() ||
+                 (next.bottom() >= previous.top() && next.left() > previous.right()), name);
+        previous = next;
+    }
 }
 }
 
@@ -384,6 +394,7 @@ private slots:
         QFETCH(QString, muteAction);
         QFETCH(QString, unmuteAction);
         AudioLevelControl control(endpoint, nullptr);
+        caption_theme::apply(&control, UiTheme::Dark);
         auto* button = control.findChild<QToolButton*>(buttonName);
         auto* slider = control.findChild<QSlider*>();
         QVERIFY(button && slider);
@@ -398,6 +409,8 @@ private slots:
         control.setLevels(endpoint, {"device A", 55, 10, false});
         control.show();
         QVERIFY(button->isEnabled() && !button->isChecked());
+        const auto buttonFill = [button] { return button->grab(QRect(3, 3, 1, 1)).toImage().pixelColor(0, 0); };
+        QCOMPARE(buttonFill(), control.palette().button().color());
         const QString onGlyph = button->text();
         QCOMPARE(onGlyph.size(), 1);
         QVERIFY(button->fontMetrics().inFont(onGlyph.front()));
@@ -413,6 +426,9 @@ private slots:
 
         control.setLevels(endpoint, {"device A", 55, 0, true});
         QVERIFY(button->isChecked());
+        QCOMPARE(buttonFill(), QColor("#a32434"));
+        caption_theme::apply(&control, UiTheme::Light);
+        QCOMPARE(buttonFill(), QColor("#a32434"));
         QVERIFY(button->text() != onGlyph && button->fontMetrics().inFont(button->text().front()));
         QCOMPARE(button->accessibleName(), unmuteAction);
         QCOMPARE(button->toolTip(), unmuteAction);
@@ -426,6 +442,7 @@ private slots:
         QCOMPARE(unmute.at(2).toBool(), false);
         QVERIFY(button->isChecked());
         control.setLevels(endpoint, {"device A", 55, 4, false});
+        QCOMPARE(buttonFill(), control.palette().button().color());
         QCOMPARE(button->text(), onGlyph);
         QTest::keyClick(button, Qt::Key_Space);
         QCOMPARE(requests.size(), 1);
@@ -954,9 +971,9 @@ private slots:
             auto* controller = workspace->findChild<MeetingControllerPane*>();
             QVERIFY(controller && !controller->isWindow() && !controller->styleSheet().isEmpty());
             auto* log = window.findChild<QPlainTextEdit*>("appLog");
-            auto* logPanel = window.findChild<QWidget*>("appLogPanel");
+            auto* logPanel = window.findChild<QDialog*>("appLogPanel");
             QVERIFY(log && logPanel && !logPanel->isVisible());
-            QCOMPARE(logPanel->parentWidget(), workspace);
+            QVERIFY(logPanel->isWindow() && !logPanel->isModal());
             QVERIFY(log->toPlainText().contains("Ready"));
             auto* collapse = controller->findChild<QPushButton*>("collapseMeetingsButton");
             QVERIFY(collapse);
@@ -975,13 +992,22 @@ private slots:
 
             QCOMPARE(window.findChildren<QPushButton*>("pageNavButton").size(), 0);
             QVERIFY(!window.findChild<QWidget*>("pageStack"));
+            const QRect originalColumns = columns->geometry();
             toggleLog->click();
             QTRY_VERIFY(logPanel->isVisible());
-            QTRY_COMPARE(columns->geometry().bottom() + 1, logPanel->y());
-            QCOMPARE(logPanel->width(), workspace->width());
+            QCOMPARE(log->window(), logPanel);
+            QCOMPARE(columns->geometry(), originalColumns);
+            QVERIFY(toggleLog->isChecked());
             QVERIFY(view->isVisible());
+            QVERIFY(logPanel->close());
+            QVERIFY(!toggleLog->isChecked() && window.isVisible());
+            controller->appendLog("Entry while the log window is closed");
+            toggleLog->click();
+            QVERIFY(logPanel->isVisible() && log->toPlainText().contains("Entry while the log window is closed"));
             toggleLog->click();
             QTRY_VERIFY(!logPanel->isVisible());
+            window.activateWindow();
+            QTRY_VERIFY(window.isActiveWindow());
             QTRY_COMPARE(columns->geometry().bottom(), workspace->rect().bottom());
 
             view->setFocus();
@@ -1081,13 +1107,13 @@ private slots:
             QCOMPARE(columns->sizes().first(), narrowWidths.first());
             QCOMPARE(window.size(), QSize(narrowWidths.first() + divider->width() + narrowWidths.last(), narrowWindow.height()));
             auto* chromeWindows = logPanel->findChild<QComboBox*>("chromeWindowCombo");
-            QVERIFY(chromeWindows && logPanel->rect().contains(boundsIn(chromeWindows, logPanel)));
+            QVERIFY(logPanel->isVisible() && chromeWindows && logPanel->rect().contains(boundsIn(chromeWindows, logPanel)));
             QTest::mouseClick(expand, Qt::LeftButton);
             QCOMPARE(columns->sizes(), narrowWidths);
             toggleLog->click();
-            auto* mic = captions->findChild<QSlider*>("microphoneVolume");
-            QVERIFY(mic);
-            QVERIFY(boundsIn(mic, captions).top() > boundsIn(send, captions).bottom());
+            auto* speaker = captions->findChild<QToolButton*>("speakerMute");
+            QVERIFY(speaker);
+            QVERIFY(boundsIn(speaker, captions).top() > boundsIn(send, captions).bottom());
             QVERIFY(boundsIn(spacing, captions).bottom() < boundsIn(view, captions).top());
 
             window.resize(expandedWindow);

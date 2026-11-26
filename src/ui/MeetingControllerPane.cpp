@@ -132,8 +132,8 @@ MeetingControllerPane::MeetingControllerPane(QWidget* parent)
     refreshCollapseTitle();
     shell->addWidget(collapseBar_);
     shell->addWidget(dashboardPage_, 1);
-    logPanel_ = createDiagnosticsPage();
-    logPanel_->hide();
+    logWindow_ = createLogWindow();
+    connect(logWindow_, &QDialog::finished, this, [this] { emit logVisibilityChanged(false); });
 
     connect(collapseButton_, &QPushButton::clicked, this, [this] {
         setMeetingsCollapsed(true);
@@ -343,9 +343,11 @@ QWidget* MeetingControllerPane::createDashboardPage()
     return page;
 }
 
-QWidget* MeetingControllerPane::createDiagnosticsPage()
+QDialog* MeetingControllerPane::createLogWindow()
 {
-    auto* page = new QWidget(this);
+    auto* page = new QDialog(this);
+    page->setWindowTitle(tr("Meeting Handler — Activity Log"));
+    page->resize(800, 500);
     page->setObjectName("appLogPanel");
     page->setAttribute(Qt::WA_StyledBackground);
 
@@ -436,9 +438,15 @@ QWidget* MeetingControllerPane::createDiagnosticsPage()
 
 void MeetingControllerPane::setLogVisible(bool visible)
 {
-    if (!logPanel_ || logPanel_->isVisible() == visible)
-        return;
-    logPanel_->setVisible(visible);
+    if (visible) {
+        diagnosticsTabs_->setCurrentWidget(liveDiagnostics_);
+        if (logWindow_->isMinimized()) logWindow_->showNormal();
+        else logWindow_->show();
+        logWindow_->raise();
+        logWindow_->activateWindow();
+    } else {
+        logWindow_->hide();
+    }
     emit logVisibilityChanged(visible);
 }
 
@@ -546,8 +554,8 @@ void MeetingControllerPane::onInspectionFinished(const QJsonObject& result)
 {
     accessibilityTree_->setPlainText(
         QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Indented)));
-    diagnosticsTabs_->setCurrentIndex(1);
     setLogVisible(true);
+    diagnosticsTabs_->setCurrentWidget(accessibilityTree_);
 
     if (result.value("ok").toBool())
     {
@@ -870,6 +878,7 @@ QFrame* MeetingControllerPane::createMeetingCard(const ManagedMeeting& meeting)
 
     auto* card = makePanel(
         meetingsLayout_->parentWidget(), isActive ? "meetingCardActive" : "meetingCard");
+    card->setProperty("unmuted", meeting.microphone == ManagedMeeting::Microphone::Unmuted);
     auto* layout = new QVBoxLayout(card);
     layout->setSizeConstraint(QLayout::SetNoConstraint);
     layout->setContentsMargins(12, 14, 12, 14);
