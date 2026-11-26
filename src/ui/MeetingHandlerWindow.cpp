@@ -4,14 +4,50 @@
 #include "MeetingControllerPane.h"
 
 #include <QApplication>
+#include <QPainter>
 #include <QScreen>
 #include <QSettings>
 #include <QSplitter>
+#include <QTimer>
+#include <QToolButton>
 #include <QVBoxLayout>
+#include <QWindowStateChangeEvent>
+
+namespace {
+constexpr int collapsedDividerWidth = 9;
+constexpr int dividerSpaceFreedOnCollapse = 2 * caption_theme::splitterThickness - collapsedDividerWidth;
+
+class ExpandMeetingsButton final : public QToolButton {
+public:
+    explicit ExpandMeetingsButton(QSplitterHandle* handle) : QToolButton(handle) {
+        setObjectName("expandMeetingsButton");
+        setAccessibleName(tr("Expand meetings"));
+        setToolTip(tr("Expand meetings"));
+        setCursor(Qt::PointingHandCursor);
+        setFocusPolicy(Qt::StrongFocus);
+        setAttribute(Qt::WA_Hover);
+        setFixedSize(collapsedDividerWidth, 72);
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter(this);
+        if (hasFocus() || underMouse() || isDown())
+            painter.fillRect(rect(), palette().mid());
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(palette().buttonText());
+        const QPointF center = QRectF(rect()).center();
+        for (int dot = -2; dot <= 2; ++dot)
+            painter.drawEllipse(center + QPointF(0, 9 * dot), 1.8, 1.8);
+    }
+};
+}
 
 MeetingHandlerWindow::MeetingHandlerWindow(const Settings& captionSettings, QSettings& layout)
     : sidebarWidth_(captionSettings.sidePanelWidth),
-      meetingColumnWidth_(qBound(1, layout.value("meetingColumnWidth", 360).toInt(), QWIDGETSIZE_MAX)) {
+      meetingColumnWidth_(qBound(1, layout.value("meetingColumnWidth", 360).toInt(), QWIDGETSIZE_MAX)),
+      pendingNormalSize_(layout.value("pendingNormalSize").toSize()) {
     setWindowFlag(Qt::FramelessWindowHint, captionSettings.compactView);
     setWindowFlag(Qt::WindowStaysOnTopHint, captionSettings.compactView || captionSettings.alwaysOnTop);
 
@@ -33,6 +69,25 @@ MeetingHandlerWindow::MeetingHandlerWindow(const Settings& captionSettings, QSet
     columns_->addWidget(controller_);
     auto* captions = new CaptionPane(sidebar, columns_);
     columns_->addWidget(captions);
+    // Qt keeps this handle between the sidebar and transcript when Meetings is hidden.
+    auto* divider = columns_->handle(2);
+    auto* gripLayout = new QVBoxLayout(divider);
+    gripLayout->setContentsMargins(0, 0, 0, 0);
+    auto* expand = new ExpandMeetingsButton(divider);
+    gripLayout->addWidget(expand, 0, Qt::AlignCenter);
+    expand->hide();
+    divider->setBackgroundRole(QPalette::AlternateBase);
+    divider->setAutoFillBackground(true);
+    connect(captions, &CaptionPane::headerPaletteChanged, divider, &QWidget::setPalette);
+    connect(expand, &QToolButton::clicked, controller_, [this] {
+        controller_->setMeetingsCollapsed(false);
+        controller_->setFocus(Qt::OtherFocusReason);
+    });
+    connect(controller_, &MeetingControllerPane::meetingsCollapsedChanged, this, [this, expand](bool collapsed) {
+        expand->setVisible(collapsed);
+        columns_->setHandleWidth(collapsed ? collapsedDividerWidth : caption_theme::splitterThickness);
+        if (collapsed && expand->isVisible()) expand->setFocus(Qt::OtherFocusReason);
+    });
     columns_->setStretchFactor(0, 0);
     columns_->setStretchFactor(1, 0);
     columns_->setStretchFactor(2, 1);
@@ -42,21 +97,23 @@ MeetingHandlerWindow::MeetingHandlerWindow(const Settings& captionSettings, QSet
     log->setStyleSheet(controller_->styleSheet());
     column->addWidget(log, 1);
     setCentralWidget(workspace);
-    const int columnsMinimum = sidebar->minimumWidth() + controller_->minimumWidth()
-        + captions->minimumWidth() + 2 * columns_->handleWidth();
-    setMinimumWidth(qMax(columnsMinimum, log->minimumSizeHint().width()));
     if (layout.value("meetingsCollapsed").toBool())
         controller_->setMeetingsCollapsed(true);
+    updateMinimumWidth();
 
-    connect(columns_, &QSplitter::splitterMoved, this, [this, captions] {
+    const auto rememberColumns = [this, captions] {
         const auto widths = columns_->sizes();
-        sidebarWidth_ = widths.at(0);
-        captions->setTargetSidebarWidth(sidebarWidth_);
         if (!controller_->meetingsCollapsed()) meetingColumnWidth_ = widths.at(1);
+        sidebarWidth_ = qMax(columns_->widget(0)->minimumWidth(), widths.at(0) - maximizedSidebarExtra());
+        captions->setTargetSidebarWidth(sidebarWidth_);
+    };
+    connect(columns_, &QSplitter::splitterMoved, this, rememberColumns);
+    connect(controller_, &MeetingControllerPane::meetingsCollapseAboutToChange, this, [this, rememberColumns] {
+        if (restoreColumns_) return;
+        widthsBeforeToggle_ = columns_->sizes();
+        rememberColumns();
     });
-    connect(controller_, &MeetingControllerPane::meetingsCollapsedChanged, this, [this] {
-        setColumnWidths(columns_->sizes().first());
-    });
+    connect(controller_, &MeetingControllerPane::meetingsCollapsedChanged, this, &MeetingHandlerWindow::applyMeetingsToggle);
     connect(captions, &CaptionPane::logLine, controller_, &MeetingControllerPane::appendLog);
     connect(captions, &CaptionPane::headerPaletteChanged, controller_, &MeetingControllerPane::setHeaderPalette);
     connect(captions, &CaptionPane::logToggled, controller_, &MeetingControllerPane::setLogVisible);
@@ -69,6 +126,17 @@ MeetingHandlerWindow::MeetingHandlerWindow(const Settings& captionSettings, QSet
     const QSize available = screen()->availableGeometry().size() - QSize(16, 48);
     resize(QSize(1200, 900).boundedTo(available));
     const bool restored = restoreGeometry(layout.value("geometry").toByteArray());
+    if (restored && controller_->meetingsCollapsed()) {
+        // Older layouts saved a 48-pixel rail between two six-pixel splitter handles.
+        const int oldSpan = layout.value("collapsedDividerWidth", 48 + 2 * 6).toInt();
+        const int newSpan = columns_->handleWidth();
+        if (oldSpan > 0 && oldSpan <= QWIDGETSIZE_MAX && oldSpan != newSpan) {
+            if (pendingNormalSize_.isEmpty())
+                pendingNormalSize_ = isMaximized() || isFullScreen() ? normalGeometry().size() : size();
+            if (!pendingNormalSize_.isEmpty())
+                pendingNormalSize_.setWidth(qMax(minimumWidth(), pendingNormalSize_.width() + newSpan - oldSpan));
+        }
+    }
     captionsReady_ = captions->initialize(captionSettings);
     if (!captionsReady_) return;
 
@@ -84,6 +152,10 @@ MeetingHandlerWindow::MeetingHandlerWindow(const Settings& captionSettings, QSet
         layout.setValue("geometry", saveGeometry());
         layout.setValue("meetingsCollapsed", controller_->meetingsCollapsed());
         layout.setValue("meetingColumnWidth", meetingColumnWidth_);
+        if (controller_->meetingsCollapsed()) layout.setValue("collapsedDividerWidth", columns_->handleWidth());
+        else layout.remove("collapsedDividerWidth");
+        if (pendingNormalSize_.isEmpty()) layout.remove("pendingNormalSize");
+        else layout.setValue("pendingNormalSize", pendingNormalSize_);
         layout.remove("splitter");
         layout.sync();
     });
@@ -92,15 +164,73 @@ MeetingHandlerWindow::MeetingHandlerWindow(const Settings& captionSettings, QSet
 void MeetingHandlerWindow::showEvent(QShowEvent* event) {
     QMainWindow::showEvent(event);
     if (!restoreColumns_) return;
-    centralWidget()->layout()->activate();
-    setColumnWidths(sidebarWidth_);
     restoreColumns_ = false;
+    restoreColumnWidths();
+}
+
+int MeetingHandlerWindow::splitterHandlesWidth() const {
+    return (controller_->meetingsCollapsed() ? 1 : 2) * columns_->handleWidth();
+}
+
+void MeetingHandlerWindow::updateMinimumWidth() {
+    const int meetingsMin = controller_->meetingsCollapsed() ? 0 : controller_->minimumWidth();
+    const int columnsMinimum = columns_->widget(0)->minimumWidth() + meetingsMin
+        + columns_->widget(2)->minimumWidth() + splitterHandlesWidth();
+    setMinimumWidth(qMax(columnsMinimum, controller_->logPanel()->minimumSizeHint().width()));
+}
+
+int MeetingHandlerWindow::maximizedSidebarExtra() const {
+    if (!(isMaximized() || isFullScreen()) || !controller_->meetingsCollapsed()) return 0;
+    return meetingColumnWidth_ + dividerSpaceFreedOnCollapse;
+}
+
+void MeetingHandlerWindow::applyMeetingsToggle() {
+    // Settle the native handles before assigning widths for the new set of visible panes.
+    columns_->refresh();
+    updateMinimumWidth();
+    if (widthsBeforeToggle_.isEmpty()) return;
+    const bool collapsed = controller_->meetingsCollapsed();
+    const int middle = collapsed ? 0 : qMax(controller_->minimumWidth(), meetingColumnWidth_);
+    const int transcript = widthsBeforeToggle_.at(2);
+    if (isMaximized() || isFullScreen()) {
+        // During a Windows restore the widget can still report its maximized size.
+        // Apply the delta to the saved normal geometry while it is available.
+        if (pendingNormalSize_.isEmpty()) pendingNormalSize_ = normalGeometry().size();
+        if (!pendingNormalSize_.isEmpty()) {
+            const int widthChange = (collapsed ? widthsBeforeToggle_.at(1) : middle) + dividerSpaceFreedOnCollapse;
+            pendingNormalSize_.rwidth() += collapsed ? -widthChange : widthChange;
+        }
+    } else {
+        resize(widthsBeforeToggle_.first() + middle + transcript + splitterHandlesWidth(), height());
+    }
+    centralWidget()->layout()->activate();
+    setColumnWidths(columns_->width() - splitterHandlesWidth() - middle - transcript);
+    widthsBeforeToggle_.clear();
+}
+
+void MeetingHandlerWindow::changeEvent(QEvent* event) {
+    QMainWindow::changeEvent(event);
+    if (event->type() != QEvent::WindowStateChange || restoreColumns_) return;
+    const auto fixedStates = Qt::WindowMaximized | Qt::WindowFullScreen;
+    const auto oldState = static_cast<QWindowStateChangeEvent*>(event)->oldState();
+    if ((oldState & fixedStates) != (windowState() & fixedStates))
+        QTimer::singleShot(0, this, &MeetingHandlerWindow::restoreColumnWidths);
+}
+
+void MeetingHandlerWindow::restoreColumnWidths() {
+    if (isMinimized()) return;
+    if (!isMaximized() && !isFullScreen() && !pendingNormalSize_.isEmpty()) {
+        resize(pendingNormalSize_);
+        pendingNormalSize_ = {};
+    }
+    centralWidget()->layout()->activate();
+    setColumnWidths(sidebarWidth_ + maximizedSidebarExtra());
 }
 
 void MeetingHandlerWindow::setColumnWidths(int sidebarWidth) {
-    const int available = columns_->width() - 2 * columns_->handleWidth();
+    const int available = columns_->width() - splitterHandlesWidth();
     const int sidebarMin = columns_->widget(0)->minimumWidth();
-    const int meetingsMin = controller_->minimumWidth();
+    const int meetingsMin = controller_->meetingsCollapsed() ? 0 : controller_->minimumWidth();
     const int transcriptMin = columns_->widget(2)->minimumWidth();
     const int side = qBound(sidebarMin, sidebarWidth,
                             qMax(sidebarMin, available - meetingsMin - transcriptMin));

@@ -7,12 +7,15 @@
 #include <UIAutomation.h>
 #include <wrl/client.h>
 
+class QUrl;
+
 class ActiveTabPicker
 {
 public:
     explicit ActiveTabPicker(IUIAutomation* automation);
 
     QJsonObject listChromeTabs() const;
+    static bool isZoomMeetingTab(const QUrl& address, const QString& tabTitle, QString* meetingId = nullptr);
 
 private:
     QJsonObject readWindowTabs(HWND hwnd,

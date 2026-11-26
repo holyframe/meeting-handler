@@ -26,10 +26,6 @@ QPushButton#collapseMeetingsButton {
 QPushButton#collapseMeetingsButton:hover {
     background: palette(highlight);
 }
-QPushButton#collapseMeetingsButton[collapsed="true"] {
-    padding: 0;
-    text-align: center;
-}
 QPushButton[meetingHeaderAction="true"] {
     background: #454545;
     border: 1px solid #6A6A6A;

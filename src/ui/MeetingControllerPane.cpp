@@ -11,6 +11,7 @@
 #include <QCursor>
 #include <QDateTime>
 #include <QDialog>
+#include <QFormLayout>
 #include <QFrame>
 #include <QGridLayout>
 #include <QHash>
@@ -89,6 +90,7 @@ MeetingControllerPane::MeetingControllerPane(QWidget* parent)
     collapseButton_->setToolTip("Hide the meeting controls");
     collapseButton_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     barLayout->addWidget(collapseButton_, 1);
+    setFocusProxy(collapseButton_);
 
     const auto addHeaderButton = [this, barLayout](const QString& objectName, const QString& iconPath,
                                                   const QString& name) {
@@ -130,12 +132,11 @@ MeetingControllerPane::MeetingControllerPane(QWidget* parent)
     refreshCollapseTitle();
     shell->addWidget(collapseBar_);
     shell->addWidget(dashboardPage_, 1);
-    shell->addStretch(0);
     logPanel_ = createDiagnosticsPage();
     logPanel_->hide();
 
     connect(collapseButton_, &QPushButton::clicked, this, [this] {
-        setMeetingsCollapsed(!meetingsCollapsed_);
+        setMeetingsCollapsed(true);
     });
 
     connect(dashboardPickUpButton_, &QPushButton::clicked,
@@ -324,7 +325,7 @@ QWidget* MeetingControllerPane::createDashboardPage()
     auto* emptyTitle = new QLabel("No meetings picked up", emptyCard);
     emptyTitle->setObjectName("emptyTitle");
     emptyTitle->setAlignment(Qt::AlignCenter);
-    auto* emptyDescription = makeMutedLabel("Select + to import Chrome tabs.", emptyCard);
+    auto* emptyDescription = makeMutedLabel("Select + to import Zoom meeting tabs from Chrome.", emptyCard);
     emptyDescription->setAlignment(Qt::AlignCenter);
     emptyDescription->setMinimumWidth(0);
     emptyDescription->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
@@ -370,13 +371,14 @@ QWidget* MeetingControllerPane::createDiagnosticsPage()
     browserTitle->setObjectName("panelHeading");
     browserLayout->addWidget(browserTitle);
 
-    auto* controls = new QHBoxLayout();
     auto* browserLabel = new QLabel("Chrome window", browserPanel);
     browserLabel->setObjectName("mutedText");
 
     chromeWindowCombo_ = new QComboBox(browserPanel);
     chromeWindowCombo_->setObjectName("chromeWindowCombo");
-    chromeWindowCombo_->setMinimumWidth(340);
+    chromeWindowCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    chromeWindowCombo_->setMinimumContentsLength(22);
+    browserLabel->setBuddy(chromeWindowCombo_);
     chromeWindowCombo_->addItem("Click Refresh to list Chrome windows", QString());
 
     auto* refreshButton = new QPushButton("⟳  Refresh", browserPanel);
@@ -388,10 +390,17 @@ QWidget* MeetingControllerPane::createDiagnosticsPage()
     inspectButton_->setMinimumHeight(40);
     inspectButton_->setEnabled(false);
 
-    controls->addWidget(browserLabel);
-    controls->addWidget(chromeWindowCombo_, 1);
-    controls->addWidget(refreshButton);
-    controls->addWidget(inspectButton_);
+    auto* selector = new QHBoxLayout;
+    selector->addWidget(browserLabel);
+    selector->addWidget(chromeWindowCombo_, 1);
+    auto* actions = new QHBoxLayout;
+    actions->addWidget(refreshButton);
+    actions->addWidget(inspectButton_);
+    actions->addStretch();
+    auto* controls = new QFormLayout;
+    controls->setRowWrapPolicy(QFormLayout::WrapLongRows);
+    controls->setLayout(0, QFormLayout::LabelRole, selector);
+    controls->setLayout(0, QFormLayout::FieldRole, actions);
     browserLayout->addLayout(controls);
     layout->addWidget(browserPanel);
 
@@ -435,18 +444,11 @@ void MeetingControllerPane::setLogVisible(bool visible)
 
 void MeetingControllerPane::setMeetingsCollapsed(bool collapsed)
 {
-    if (!dashboardPage_ || !collapseBar_ || meetingsCollapsed_ == collapsed)
+    if (meetingsCollapsed_ == collapsed)
         return;
+    emit meetingsCollapseAboutToChange();
     meetingsCollapsed_ = collapsed;
-    dashboardPage_->setVisible(!collapsed);
-    if (!collapsed)
-    {
-        setMaximumWidth(QWIDGETSIZE_MAX);
-        setMinimumWidth(kMeetingsColumnMinimum);
-    }
-    collapseButton_->setAccessibleName(collapsed ? "Expand meetings" : "Collapse meetings");
-    collapseButton_->setToolTip(collapsed ? "Show the meeting controls" : "Hide the meeting controls");
-    refreshCollapseTitle();
+    setVisible(!collapsed);
     emit meetingsCollapsedChanged(collapsed);
 }
 
@@ -571,19 +573,16 @@ QString tabDetailText(const QJsonObject& tab)
 {
     QStringList parts;
 
-    if (tab.value("zoomMeeting").toBool())
-        parts.append(QString("Zoom meeting %1").arg(tab.value("meetingId").toString()));
+    const QString id = tab.value("meetingId").toString();
+    if (!id.isEmpty())
+        parts.append(QString("Zoom meeting %1").arg(id));
     else if (tab.value("addressKnown").toBool())
         parts.append(tab.value("host").toString());
     else
-        parts.append("Address not read");
+        parts.append("Identified by Zoom tab title");
 
     if (tab.value("selected").toBool())
         parts.append("Shown in this window");
-
-    const QString windowTitle = tab.value("windowTitle").toString();
-    if (!windowTitle.isEmpty())
-        parts.append(windowTitle);
 
     return parts.join("   ·   ");
 }
@@ -601,9 +600,8 @@ QList<int> askTabsToImport(QWidget* parent, const QJsonArray& tabs)
     layout->setSpacing(12);
 
     auto* intro = new QLabel(
-        "Google Chrome browser tabs, grouped by profile. Other Chromium browsers "
-        "are not listed. Check one or more tabs to import. A page address is "
-        "available only for the tab currently shown in each window.",
+        "Select Zoom meeting tabs to import from Chrome. If a meeting is missing, "
+        "show its tab in Chrome and open this picker again.",
         &dialog);
     intro->setObjectName("settingsBody");
     intro->setWordWrap(true);
@@ -756,10 +754,21 @@ void MeetingControllerPane::onChromeTabsListed(const QJsonObject& result)
         return;
     }
 
-    const QJsonArray tabs = result.value("tabs").toArray();
-    appendLog(QString("Found %1 Chrome tab(s) across %2 window(s).")
+    const QJsonArray chromeTabs = result.value("tabs").toArray();
+    QJsonArray tabs;
+    for (const auto& tab : chromeTabs) {
+        if (tab.toObject().value("zoomMeeting").toBool())
+            tabs.append(tab);
+    }
+    appendLog(QString("Found %1 Zoom meeting tab(s) across %2 Chrome window(s).")
                   .arg(tabs.size())
                   .arg(result.value("windowCount").toInt()));
+    if (tabs.isEmpty()) {
+        setStatusMessage(tr("No Zoom meeting tabs found"));
+        QMessageBox::information(this, tr("Import meeting tabs"),
+            tr("No Zoom meeting tabs found. Show a Zoom meeting in Chrome and try again."));
+        return;
+    }
 
     const QList<int> selected = askTabsToImport(this, tabs);
     if (selected.isEmpty())
@@ -1082,36 +1091,9 @@ void MeetingControllerPane::updateMeetingCounts()
 
 void MeetingControllerPane::refreshCollapseTitle()
 {
-    if (!collapseButton_ || !meetingCountValue_ || !collapseBar_)
-        return;
-    auto* barLayout = qobject_cast<QHBoxLayout*>(collapseBar_->layout());
-    collapseButton_->setProperty("collapsed", meetingsCollapsed_);
-    for (auto* action : {dashboardMuteAllButton_, dashboardSoundOffButton_, dashboardPickUpButton_, uiaRefreshButton_})
-        action->setVisible(!meetingsCollapsed_);
-    if (barLayout)
-        barLayout->activate();
-    if (meetingsCollapsed_)
-    {
-        collapseButton_->setText(QStringLiteral("\u25B6"));
-        collapseButton_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-        if (barLayout)
-            barLayout->setContentsMargins(4, 0, 4, 0);
-        const int icon = qMax(16, collapseBar_->height() - 8);
-        collapseButton_->setFixedSize(icon, icon);
-        setFixedWidth(barLayout ? barLayout->sizeHint().width() : icon + 8);
-    }
-    else
-    {
+    if (collapseButton_ && meetingCountValue_)
         collapseButton_->setText(QString("%1  Meetings (%2)")
                                       .arg(QStringLiteral("\u25C0"), meetingCountValue_->text()));
-        collapseButton_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        collapseButton_->setMinimumSize(0, 0);
-        collapseButton_->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
-        if (barLayout)
-            barLayout->setContentsMargins(8, 0, 8, 0);
-    }
-    collapseButton_->style()->unpolish(collapseButton_);
-    collapseButton_->style()->polish(collapseButton_);
 }
 
 void MeetingControllerPane::refreshBatchCard(const QString& previousKey, const ManagedMeeting& meeting)

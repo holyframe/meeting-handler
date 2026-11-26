@@ -1,9 +1,11 @@
 #include "ui/MeetingControllerPane.h"
 #include "ui/MeetingAudioSummary.h"
+#include "windows/ActiveTabPicker.h"
 #include "windows/UiaWorker.h"
 #include "meetings/ZoomAudioState.h"
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QFrame>
 #include <QFontDatabase>
 #include <QGridLayout>
@@ -20,6 +22,7 @@
 #include <QSignalSpy>
 #include <QTest>
 #include <QTimer>
+#include <QUrl>
 
 #include <cstring>
 #include <iostream>
@@ -950,6 +953,91 @@ private slots:
         QTest::mouseDClick(window.meetingCards_.first(), Qt::LeftButton, Qt::NoModifier, QPoint(8, 8));
         QCOMPARE(spy.count(), 1);
         QCOMPARE(spy.takeFirst().at(2).toString(), QString("Audio test meeting"));
+    }
+
+    void meetingTabRecognition_data()
+    {
+        QTest::addColumn<QString>("address");
+        QTest::addColumn<QString>("title");
+        QTest::addColumn<bool>("match");
+        QTest::addColumn<QString>("id");
+        QTest::newRow("web client") << "https://app.zoom.us/wc/12345678901/join" << "Weekly sync" << true << "12345678901";
+        QTest::newRow("legacy join") << "https://zoomgov.com/wc/join/123456789" << "Weekly sync" << true << "123456789";
+        QTest::newRow("invite") << "https://us02web.zoom.us/j/1234567890?pwd=example" << "Join" << true << "1234567890";
+        QTest::newRow("personal room") << "https://company.zoom.com/my/personal.room" << "My room" << true << "";
+        QTest::newRow("launcher") << "https://zoom.us/wc/launch?confno=123456789" << "Launch" << true << "123456789";
+        QTest::newRow("background meeting") << "" << "Zoom Meeting - Zoom" << true << "";
+        QTest::newRow("background call using mic") << "" << "Zoom Meeting - Microphone recording" << true << "";
+        QTest::newRow("background call with audio") << "" << "Zoom Meeting - Zoom - Audio playing" << true << "";
+        QTest::newRow("background webinar") << "" << "Zoom Webinar" << true << "";
+        QTest::newRow("background notes") << "" << "Zoom Meeting Notes" << false << "";
+        QTest::newRow("search") << "" << "Zoom Meeting - Google Search" << false << "";
+        QTest::newRow("unrelated tab with audio") << "" << "Zoom Meeting tips - Audio playing" << false << "";
+        QTest::newRow("calendar") << "https://calendar.example/meetings" << "Zoom Meeting" << false << "";
+        QTest::newRow("Zoom portal") << "https://zoom.us/account/meeting" << "Zoom Meeting" << false << "";
+        QTest::newRow("lookalike host") << "https://zoom.us.example.com/j/123456789" << "Zoom Meeting" << false << "";
+        QTest::newRow("internal page") << "chrome://settings" << "Zoom Meeting" << false << "";
+        QTest::newRow("incomplete link") << "https://zoom.us/wc/join/123" << "Launch Meeting - Zoom" << false << "";
+    }
+
+    void meetingTabRecognition()
+    {
+        QFETCH(QString, address);
+        QFETCH(QString, title);
+        QFETCH(bool, match);
+        QFETCH(QString, id);
+        QString actualId = "old value";
+        QCOMPARE(ActiveTabPicker::isZoomMeetingTab(QUrl(address), title, &actualId), match);
+        QCOMPARE(actualId, id);
+    }
+
+    void pickupListsOnlyMeetingsAcrossProfiles()
+    {
+        MeetingControllerPane pane;
+        QObject::disconnect(&pane, nullptr, pane.worker_, nullptr);
+        const auto tab = [](QString name, QString profile, QString runtimeId, bool meeting) {
+            return QJsonObject{{"tabName", name}, {"tabRuntimeId", runtimeId}, {"windowHandle", "1234"},
+                {"profileName", profile}, {"profileKey", profile}, {"zoomMeeting", meeting}};
+        };
+        QJsonArray tabs{tab("Inbox", "Personal", "1", false)};
+        connect(&pane, &MeetingControllerPane::pickupRequested, &pane, [&] {
+            pane.onChromeTabsListed({{"ok", true}, {"tabs", tabs}, {"windowCount", 3}});
+        });
+        bool emptyMessage = false;
+        QTimer::singleShot(0, &pane, [&] {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            if (!dialog) return;
+            auto* message = qobject_cast<QMessageBox*>(dialog);
+            emptyMessage = message && message->text().contains("No Zoom meeting tabs found");
+            dialog->accept();
+        });
+        pane.dashboardPickUpButton_->click();
+        QVERIFY(emptyMessage && pane.meetings_.isEmpty() && pane.dashboardPickUpButton_->isEnabled());
+
+        tabs.append(tab("Design review", "Work", "2", true));
+        tabs.append(tab("Zoom support", "Work", "3", false));
+        tabs.append(tab("Standup", "Team", "4", true));
+        tabs.append(tab("Planning", "Work", "5", true));
+        QStringList shown, profiles;
+        QTimer::singleShot(0, &pane, [&] {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            if (!dialog) return;
+            for (auto* label : dialog->findChildren<QLabel*>("profileHeading"))
+                profiles.append(label->text());
+            for (auto* box : dialog->findChildren<QCheckBox*>("tabImportCheck"))
+                shown.append(box->text());
+            for (auto* button : dialog->findChildren<QPushButton*>())
+                if (button->text() == "Select all") button->click();
+            auto* import = dialog->findChild<QPushButton*>("primaryButton");
+            if (import && import->isEnabled()) import->click();
+            else dialog->reject();
+        });
+        pane.dashboardPickUpButton_->click();
+        QCOMPARE(profiles, QStringList({"Work", "Team"}));
+        QCOMPARE(shown, QStringList({"Design review", "Planning", "Standup"}));
+        QStringList imported;
+        for (const auto& meeting : pane.meetings_) imported.append(meeting.tabRuntimeId);
+        QCOMPARE(imported, QStringList({"2", "5", "4"}));
     }
 
     void importButtonCentersItsPlus_data()

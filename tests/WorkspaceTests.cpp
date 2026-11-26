@@ -13,6 +13,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
+#include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFile>
 #include <QFileInfo>
@@ -70,6 +71,42 @@ void showWithPingFixture(MeetingHandlerWindow& window) {
     window.show();
 }
 
+void verifyMeetingsDivider(QSplitter* columns) {
+    auto* divider = columns->handle(2);
+    auto* expand = divider->findChild<QToolButton*>("expandMeetingsButton");
+    QVERIFY(expand && expand->isVisible() && expand->text().isEmpty());
+    QCOMPARE(expand->accessibleName(), "Expand meetings");
+    QVERIFY(columns->widget(1)->isHidden() && !columns->handle(1)->isVisible());
+    const int left = columns->widget(0)->geometry().right() + 1;
+    QCOMPARE(divider->geometry(), QRect(left, 0, columns->handleWidth(), columns->height()));
+    QCOMPARE(columns->widget(2)->x(), left + divider->width());
+    QCOMPARE(divider->width(), 9);
+    QCOMPARE(expand->size(), QSize(9, 72));
+    const auto grip = boundsIn(expand, divider);
+    QVERIFY(qAbs(grip.center().y() - divider->rect().center().y()) <= 1);
+    QCOMPARE(columns->childAt(expand->mapTo(columns, expand->rect().center())), expand);
+    QCOMPARE(columns->childAt(divider->mapTo(columns, QPoint(divider->width() / 2, 4))), divider);
+
+    const QImage rendered = expand->grab().toImage();
+    const int centerX = rendered.width() / 2;
+    const int inset = qMax(1, qRound(3 * rendered.devicePixelRatio()));
+    const auto background = rendered.pixel(centerX, inset);
+    int dots = 0, first = -1, last = -1;
+    bool inDot = false;
+    for (int y = inset; y < rendered.height() - inset; ++y) {
+        const bool ink = rendered.pixel(centerX, y) != background;
+        if (ink && !inDot) ++dots;
+        if (ink) {
+            if (first == -1) first = y;
+            last = y;
+        }
+        inDot = ink;
+    }
+    QCOMPARE(dots, 5);
+    QVERIFY(last - first >= 36 * rendered.devicePixelRatio());
+    QVERIFY(qAbs(first + last - (rendered.height() - 1)) <= 2 * rendered.devicePixelRatio());
+}
+
 void verifyColumnsFit(QWidget* workspace) {
     auto* columns = workspace->findChild<QSplitter*>("workspaceColumns");
     auto* sidebar = workspace->findChild<QWidget*>("captionSidebar");
@@ -83,18 +120,19 @@ void verifyColumnsFit(QWidget* workspace) {
     auto* ping = sidebar->findChild<PingStatusPanel*>();
     auto* targetList = sidebar->findChild<QWidget*>("targetScroll");
     auto* meetingHeader = controller->findChild<QWidget*>("collapseBar");
-    QVERIFY(picker && more && ping && targetList && meetingHeader);
+    auto* formatting = captions->findChild<QWidget*>("captionFormattingBar");
+    QVERIFY(picker && more && ping && targetList && meetingHeader && formatting);
     QVERIFY(!sidebar->findChild<QLabel*>("captionTargetHeading"));
     QVERIFY(picker->isVisible());
     const auto pickerRect = boundsIn(picker, workspace);
-    const auto headerRect = boundsIn(meetingHeader, workspace);
+    const auto headerRect = boundsIn(formatting, workspace);
     QCOMPARE(headerRect.top(), 0);
     QCOMPARE(pickerRect.center().y(), headerRect.center().y());
     QVERIFY(qAbs(pickerRect.center().x() - boundsIn(sidebar, workspace).center().x()) <= 1);
     QCOMPARE(boundsIn(targetList, workspace).top(), headerRect.bottom() + 1);
     QVERIFY(more->isVisible());
     QCOMPARE(targetList->geometry().bottom() + 1, more->y());
-    QCOMPARE(more->height(), columns->handleWidth());
+    QCOMPARE(more->height(), 6);
     QCOMPARE(more->width(), sidebar->width());
     QVERIFY(more->isChecked() && ping->isVisible());
     QCOMPARE(more->geometry().bottom() + 1, ping->y());
@@ -105,30 +143,36 @@ void verifyColumnsFit(QWidget* workspace) {
     QCOMPARE(columns->widget(1), controller);
     QCOMPARE(columns->widget(2), captions);
     QCOMPARE(sidebar->x(), 0);
-    QCOMPARE(sidebar->geometry().right() + 1 + columns->handleWidth(), controller->x());
-    QCOMPARE(controller->geometry().right() + 1 + columns->handleWidth(), captions->x());
+    if (controller->meetingsCollapsed()) {
+        verifyMeetingsDivider(columns);
+    } else {
+        QCOMPARE(columns->handleWidth(), 6);
+        QVERIFY(controller->isVisible() && meetingHeader->isVisible());
+        QCOMPARE(sidebar->geometry().right() + 1 + columns->handleWidth(), controller->x());
+        QCOMPARE(controller->geometry().right() + 1 + columns->handleWidth(), captions->x());
+        QCOMPARE(controller->height(), columns->height());
+        QCOMPARE(meetingHeader->height(), formatting->height());
+        QCOMPARE(boundsIn(meetingHeader, workspace).top(), headerRect.top());
+    }
     QCOMPARE(captions->geometry().right() + 1, workspace->width());
     QCOMPARE(sidebar->height(), columns->height());
-    QCOMPARE(controller->height(), columns->height());
     QCOMPARE(captions->height(), columns->height());
     auto* view = captions->findChild<CaptionView*>();
-    auto* formatting = captions->findChild<QWidget*>("captionFormattingBar");
     auto* toolbar = captions->findChild<QWidget*>("captionToolbar");
     QVERIFY(view && formatting && toolbar);
     QCOMPARE(boundsIn(formatting, captions).topLeft(), QPoint());
-    QCOMPARE(formatting->height(), meetingHeader->height());
     const auto background = [](QWidget* pane) { return pane->grab(QRect(0, 0, 2, 2)).toImage().pixelColor(0, 0); };
     const auto captionColor = background(formatting);
     QCOMPARE(captionColor, captions->palette().color(QPalette::AlternateBase));
     QCOMPARE(background(sidebar), captionColor);
-    QCOMPARE(background(meetingHeader), captionColor);
+    if (!controller->meetingsCollapsed()) QCOMPARE(background(meetingHeader), captionColor);
     QCOMPARE(formatting->width(), captions->width());
     QCOMPARE(boundsIn(view, captions).topLeft(), QPoint(0, formatting->height()));
     QCOMPARE(boundsIn(view, captions).right(), captions->rect().right());
     QCOMPARE(boundsIn(toolbar, captions).bottom(), captions->rect().bottom());
     verifyControlsFit(formatting, {"captionFont", "captionSize", "captionSpacing"});
     verifyControlsFit(toolbar, {"sendCaption", "pressEnter", "toggleListening", "saveCaptions", "clearCaptions",
-                                "captionPreferences", "toggleActivityLog", "microphoneStatus", "microphoneVolume",
+                                "captionPreferences", "toggleActivityLog", "microphoneMute", "microphoneVolume",
                                 "microphonePeak", "microphonePercent", "speakerMute", "speakerVolume",
                                 "speakerPeak", "speakerPercent"});
 }
@@ -312,40 +356,32 @@ private slots:
         QVERIFY(!retry->isActive());
     }
 
-    void microphoneIconOnlyDisplaysState() {
-        AudioLevelControl control(AudioEndpoint::Microphone, nullptr);
-        auto* icon = control.findChild<QLabel*>("microphoneStatus");
-        auto* slider = control.findChild<QSlider*>("microphoneVolume");
-        QVERIFY(icon && slider && !control.findChild<QToolButton*>());
-        QSignalSpy muteWrites(&control, &AudioLevelControl::muteRequested);
-        QSignalSpy volumeWrites(&control, &AudioLevelControl::volumeRequested);
-        control.setLevels(AudioEndpoint::Microphone, {"mic", 55, 10, false});
-        control.show();
-        const auto onGlyph = icon->text();
-        QCOMPARE(icon->accessibleName(), "Windows microphone is on");
-        QCOMPARE(icon->focusPolicy(), Qt::NoFocus);
-        QTest::mouseClick(icon, Qt::LeftButton);
-        QTest::keyClick(icon, Qt::Key_Space);
-        control.setLevels(AudioEndpoint::Microphone, {"mic", 55, 0, true});
-        QCOMPARE(icon->accessibleName(), "Windows microphone is muted");
-        QVERIFY(icon->text() != onGlyph);
-        QTest::mouseClick(icon, Qt::LeftButton);
-        QVERIFY(muteWrites.isEmpty() && volumeWrites.isEmpty());
-        QTest::keyClick(slider, Qt::Key_Right);
-        QCOMPARE(volumeWrites.size(), 1);
-        QVERIFY(muteWrites.isEmpty());
+    void windowsMuteIcon_data() {
+        QTest::addColumn<AudioEndpoint>("endpoint");
+        QTest::addColumn<QString>("buttonName");
+        QTest::addColumn<QString>("muteAction");
+        QTest::addColumn<QString>("unmuteAction");
+        QTest::newRow("microphone") << AudioEndpoint::Microphone << "microphoneMute"
+                                    << "Mute Windows microphone" << "Unmute Windows microphone";
+        QTest::newRow("speakers") << AudioEndpoint::Speakers << "speakerMute"
+                                  << "Mute Windows sound" << "Unmute Windows sound";
     }
 
-    void windowsSpeakerMuteIcon() {
-        const auto endpoint = AudioEndpoint::Speakers;
+    void windowsMuteIcon() {
+        QFETCH(AudioEndpoint, endpoint);
+        QFETCH(QString, buttonName);
+        QFETCH(QString, muteAction);
+        QFETCH(QString, unmuteAction);
         AudioLevelControl control(endpoint, nullptr);
-        auto* button = control.findChild<QToolButton*>("speakerMute");
+        auto* button = control.findChild<QToolButton*>(buttonName);
         auto* slider = control.findChild<QSlider*>();
         QVERIFY(button && slider);
         QSignalSpy requests(&control, &AudioLevelControl::muteRequested);
         QSignalSpy volumeWrites(&control, &AudioLevelControl::volumeRequested);
         QVERIFY(button->isCheckable() && !button->isEnabled());
-        control.setLevels(AudioEndpoint::Microphone, {"other", 90, 0, true});
+        QCOMPARE(button->focusPolicy(), Qt::StrongFocus);
+        const auto other = endpoint == AudioEndpoint::Microphone ? AudioEndpoint::Speakers : AudioEndpoint::Microphone;
+        control.setLevels(other, {"other", 90, 0, true});
         QVERIFY(!button->isEnabled());
 
         control.setLevels(endpoint, {"device A", 55, 10, false});
@@ -354,7 +390,8 @@ private slots:
         const QString onGlyph = button->text();
         QCOMPARE(onGlyph.size(), 1);
         QVERIFY(button->fontMetrics().inFont(onGlyph.front()));
-        QCOMPARE(button->accessibleName(), "Mute Windows sound");
+        QCOMPARE(button->accessibleName(), muteAction);
+        QCOMPARE(button->toolTip(), muteAction);
         QTest::mouseClick(button, Qt::LeftButton);
         QCOMPARE(requests.size(), 1);
         const auto mute = requests.takeFirst();
@@ -366,14 +403,22 @@ private slots:
         control.setLevels(endpoint, {"device A", 55, 0, true});
         QVERIFY(button->isChecked());
         QVERIFY(button->text() != onGlyph && button->fontMetrics().inFont(button->text().front()));
-        QCOMPARE(button->accessibleName(), "Unmute Windows sound");
+        QCOMPARE(button->accessibleName(), unmuteAction);
+        QCOMPARE(button->toolTip(), unmuteAction);
         QCOMPARE(slider->value(), 55);
         QVERIFY(requests.isEmpty());
-        QTest::keyClick(button, Qt::Key_Space);
+        QTest::mouseClick(button, Qt::LeftButton);
         QCOMPARE(requests.size(), 1);
-        QCOMPARE(requests.takeFirst().at(2).toBool(), false);
+        const auto unmute = requests.takeFirst();
+        QCOMPARE(unmute.at(0).value<AudioEndpoint>(), endpoint);
+        QCOMPARE(unmute.at(1).toString(), "device A");
+        QCOMPARE(unmute.at(2).toBool(), false);
+        QVERIFY(button->isChecked());
         control.setLevels(endpoint, {"device A", 55, 4, false});
         QCOMPARE(button->text(), onGlyph);
+        QTest::keyClick(button, Qt::Key_Space);
+        QCOMPARE(requests.size(), 1);
+        QCOMPARE(requests.takeFirst().at(2).toBool(), true);
 
         QTest::mousePress(button, Qt::LeftButton);
         QVERIFY(button->isDown());
@@ -384,6 +429,101 @@ private slots:
         QVERIFY(!button->isEnabled() && slider->isEnabled());
         button->click();
         QVERIFY(requests.isEmpty() && volumeWrites.isEmpty());
+        QTest::keyClick(slider, Qt::Key_Right);
+        QCOMPARE(volumeWrites.size(), 1);
+        QVERIFY(requests.isEmpty());
+    }
+
+    void microphoneWorkerBindsTheSelectedRecordingDevice() {
+        WindowsAudioLevels audio;
+        QSignalSpy inventory(&audio, &WindowsAudioLevels::microphonesListed);
+        QSignalSpy levels(&audio, &WindowsAudioLevels::levelsChanged);
+        QSignalSpy failures(&audio, &WindowsAudioLevels::writeFailed);
+        audio.listMicrophones();
+        QCOMPARE(inventory.size(), 1);
+        audio.setMonitoring(true);
+        const auto devices = inventory.takeFirst().first().value<QList<MicrophoneDevice>>();
+        for (const auto& device : devices) {
+            QVERIFY(!device.id.isEmpty() && !device.name.isEmpty());
+            audio.selectMicrophone(device.id);
+            QCOMPARE(levels.last().first().value<AudioEndpoint>(), AudioEndpoint::Microphone);
+            QCOMPARE(levels.last().last().value<AudioLevels>().deviceId, device.id);
+        }
+        audio.selectMicrophone("missing-test-microphone");
+        const auto unavailable = levels.last().last().value<AudioLevels>();
+        QVERIFY(unavailable.deviceId.isEmpty() && !unavailable.muted.has_value());
+        audio.setMonitoring(false);
+        audio.toggleMicrophoneMute();
+        QCOMPARE(failures.size(), 1);
+        QCOMPARE(failures.first().first().value<AudioEndpoint>(), AudioEndpoint::Microphone);
+    }
+
+    void globalMicrophoneShortcutCanBeEditedAndCleared() {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        constexpr unsigned mods = MOD_ALT | MOD_CONTROL | MOD_SHIFT;
+        const auto qtMods = Qt::AltModifier | Qt::ControlModifier | Qt::ShiftModifier;
+        Settings settings;
+        settings.captionSource = CaptionSourcePreference::ChromeLiveCaption;
+        settings.transcriptPath = temp.filePath("capture.txt").toStdWString();
+        settings.hotkeyModifiers = mods;
+        settings.hotkeyVirtualKey = VK_F21;
+        settings.microphoneHotkeyModifiers = mods;
+        settings.microphoneHotkeyVirtualKey = VK_F22;
+        settings.microphoneDeviceId = L"missing-test-microphone";
+        QWidget owner, sidebar(&owner), otherApp;
+        const auto otherFrame = reinterpret_cast<HWND>(otherApp.winId());
+        QVERIFY(::RegisterHotKey(otherFrame, 1, mods | MOD_NOREPEAT, VK_F23));
+        CaptionPane pane(&sidebar, &owner);
+        QSignalSpy selections(&pane, &CaptionPane::microphoneDeviceSelected);
+        QVERIFY(pane.initialize(settings));
+        QCOMPARE(selections.size(), 1);
+        QCOMPARE(selections.takeFirst().first().toString(), "missing-test-microphone");
+        // Observe the global command without writing to the computer's microphone.
+        QVERIFY(disconnect(&pane, &CaptionPane::microphoneMuteToggleRequested, nullptr, nullptr));
+        QSignalSpy toggles(&pane, &CaptionPane::microphoneMuteToggleRequested);
+        const auto frame = reinterpret_cast<HWND>(owner.winId());
+        QVERIFY(::PostMessageW(frame, WM_HOTKEY, HOTKEY_MICROPHONE_MUTE, MAKELPARAM(mods, VK_F22)));
+        QTRY_COMPARE(toggles.size(), 1);
+        auto* preferences = pane.findChild<QToolButton*>("captionPreferences");
+        QVERIFY(preferences);
+        bool duplicateRejected = false, reservedRejected = false;
+        QTimer::singleShot(0, &pane, [&] {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            auto* edit = dialog->findChild<QLineEdit*>("microphoneHotkey");
+            auto* ok = dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok);
+            auto* error = dialog->findChild<QLabel*>("shortcutError");
+            QTest::keyClick(edit, Qt::Key_F21, qtMods);
+            ok->click();
+            duplicateRejected = dialog->isVisible() && error->text().contains("different shortcuts");
+            QTest::keyClick(edit, Qt::Key_F23, qtMods);
+            ok->click();
+            reservedRejected = dialog->isVisible() && error->text().contains("unavailable");
+            dialog->reject();
+        });
+        preferences->click();
+        QVERIFY(duplicateRejected && reservedRejected);
+        QVERIFY(!::RegisterHotKey(otherFrame, 2, mods | MOD_NOREPEAT, VK_F22));
+        QVERIFY(::PostMessageW(frame, WM_HOTKEY, HOTKEY_MICROPHONE_MUTE, MAKELPARAM(mods, VK_F22)));
+        QTRY_COMPARE(toggles.size(), 2);
+
+        QTimer::singleShot(0, &pane, [&] {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            dialog->findChild<QComboBox*>("microphoneDevice")->setCurrentIndex(0);
+            dialog->findChild<QPushButton*>("microphoneHotkeyClear")->click();
+            dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
+        });
+        preferences->click();
+        QCOMPARE(selections.size(), 1);
+        QVERIFY(selections.takeFirst().first().toString().isEmpty());
+        QVERIFY(::RegisterHotKey(otherFrame, 2, mods | MOD_NOREPEAT, VK_F22));
+        ::UnregisterHotKey(otherFrame, 1);
+        ::UnregisterHotKey(otherFrame, 2);
+        Settings saved;
+        saved.Load();
+        QVERIFY(saved.microphoneDeviceId.empty());
+        QCOMPARE(saved.microphoneHotkeyVirtualKey, 0U);
+        QCOMPARE(saved.hotkeyVirtualKey, unsigned(VK_F21));
     }
 
     void audioControlsFollowWindowsWithoutWritingOnRefresh() {
@@ -636,6 +776,7 @@ private slots:
         settings.saveFolder = temp.path().toStdWString();
         settings.hotkeyVirtualKey = 0;
         QWidget owner;
+        WindowsAudioLevels audio;
         bool fieldsFound = false;
         const auto editSettings = [&](bool accept) {
             QTimer::singleShot(0, &owner, [&, accept] {
@@ -644,29 +785,45 @@ private slots:
                 auto* source = dialog->findChild<QComboBox*>("captionSource");
                 auto* theme = dialog->findChild<QComboBox*>("captionTheme");
                 auto* hotkey = dialog->findChild<QLineEdit*>("sendHotkey");
+                auto* microphone = dialog->findChild<QComboBox*>("microphoneDevice");
+                auto* mute = dialog->findChild<QLineEdit*>("microphoneHotkey");
                 auto* arrows = dialog->findChild<QCheckBox*>("speakerVolumeArrowKeys");
-                fieldsFound = source && theme && hotkey && arrows && arrows->isChecked();
+                fieldsFound = source && theme && hotkey && arrows && arrows->isChecked() && microphone && mute &&
+                              microphone->currentText() == "Windows default" && mute->text() == "None";
                 if (fieldsFound) {
                     source->setCurrentIndex(1);
                     theme->setCurrentIndex(1);
                     arrows->setChecked(false);
                     QTest::keyClick(hotkey, Qt::Key_F8, Qt::ControlModifier | Qt::AltModifier);
+                    QTest::keyClick(mute, Qt::Key_F9, Qt::ControlModifier | Qt::ShiftModifier);
+                    emit audio.microphonesListed({{"usb-a", "USB headset"}, {"usb-b", "USB headset"}});
+                    microphone->setCurrentIndex(2);
+                    emit audio.microphonesListed({{"usb-a", "USB headset"}});
+                    fieldsFound = microphone->currentText() == "USB headset (unavailable)";
+                    emit audio.microphonesListed({{"usb-b", "Desk headset"}, {"usb-a", "USB headset"}});
+                    fieldsFound = fieldsFound && microphone->currentText() == "Desk headset";
                 }
                 if (accept) dialog->accept();
                 else dialog->reject();
             });
-            return ShowSettingsDialog(&owner, settings);
+            return ShowSettingsDialog(&owner, settings, audio);
         };
         QVERIFY(!editSettings(false));
         QVERIFY(fieldsFound);
         QCOMPARE(settings.theme, UiTheme::Dark);
         QCOMPARE(settings.hotkeyVirtualKey, 0U);
+        QCOMPARE(settings.microphoneHotkeyVirtualKey, 0U);
+        QVERIFY(settings.microphoneDeviceId.empty());
         QVERIFY(settings.speakerVolumeArrowKeys);
         QVERIFY(editSettings(true));
         QVERIFY(fieldsFound);
         settings.Save();
         Settings savedSettings;
         savedSettings.Load();
+        QCOMPARE(savedSettings.microphoneDeviceId, std::wstring(L"usb-b"));
+        QCOMPARE(savedSettings.microphoneDeviceName, std::wstring(L"Desk headset"));
+        QCOMPARE(savedSettings.microphoneHotkeyVirtualKey, unsigned(VK_F9));
+        QCOMPARE(savedSettings.microphoneHotkeyModifiers, unsigned(MOD_CONTROL | MOD_SHIFT));
         QCOMPARE(savedSettings.captionSource, CaptionSourcePreference::ChromeLiveCaption);
         QVERIFY(!savedSettings.speakerVolumeArrowKeys);
         QCOMPARE(settings.theme, UiTheme::Light);
@@ -719,6 +876,44 @@ private slots:
         QVERIFY(view->Empty());
     }
 
+    void upgradesSavedCollapsedMeetingRail_data() {
+        QTest::addColumn<int>("savedDividerWidth");
+        QTest::newRow("original rail without a stored width") << 0;
+        QTest::newRow("six-pixel splitter") << 6;
+    }
+
+    void upgradesSavedCollapsedMeetingRail() {
+        QFETCH(int, savedDividerWidth);
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        Settings settings;
+        settings.captionSource = CaptionSourcePreference::ChromeLiveCaption;
+        settings.transcriptPath = temp.filePath("captions.txt").toStdWString();
+        settings.hotkeyVirtualKey = 0;
+        settings.sidePanelWidth = 160;
+        QSettings layout(temp.filePath("layout.ini"), QSettings::IniFormat);
+        QMainWindow previous;
+        previous.resize(1000, 560);
+        previous.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&previous));
+        layout.setValue("geometry", previous.saveGeometry());
+        layout.setValue("meetingsCollapsed", true);
+        if (savedDividerWidth > 0) layout.setValue("collapsedDividerWidth", savedDividerWidth);
+        previous.hide();
+
+        MeetingHandlerWindow window(settings, layout);
+        QVERIFY(window.captionsReady());
+        showWithPingFixture(window);
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* columns = window.findChild<QSplitter*>("workspaceColumns");
+        QVERIFY(columns);
+        verifyMeetingsDivider(columns);
+        const int previousSpan = savedDividerWidth > 0 ? savedDividerWidth : 48 + 2 * 6;
+        QCOMPARE(window.width(), previous.width() - previousSpan + columns->handleWidth());
+        QCOMPARE(columns->sizes().first(), settings.sidePanelWidth);
+        QCOMPARE(columns->sizes().last(), previous.width() - previousSpan - settings.sidePanelWidth);
+    }
+
     void threeColumnsShareOneWindow() {
         QTemporaryDir temp;
         QVERIFY(temp.isValid());
@@ -730,6 +925,7 @@ private slots:
         settings.sidePanelWidth = 273;
         QPointer<CaptionView> formerView;
         int savedMeetingsWidth = 0;
+        QList<int> savedCollapsedWidths;
         {
             MeetingHandlerWindow window(settings, layout);
             QVERIFY(window.captionsReady());
@@ -811,18 +1007,33 @@ private slots:
 
             const auto expandedWidths = columns->sizes();
             const QSize expandedWindow = window.size();
+            const int transcriptViewport = view->viewport()->width();
+            auto* divider = columns->handle(2);
+            auto* expand = divider->findChild<QToolButton*>("expandMeetingsButton");
+            QVERIFY(expand && !expand->isVisible());
             QTest::mouseClick(collapse, Qt::LeftButton);
             QTRY_VERIFY(controller->meetingsCollapsed());
-            QCOMPARE(collapse->text(), QStringLiteral("\u25B6"));
+            verifyMeetingsDivider(columns);
             QVERIFY(!window.findChild<QWidget*>("pageRoot")->isVisible());
-            QVERIFY(collapse->isVisible());
-            QCOMPARE(boundsIn(controller->findChild<QWidget*>("collapseBar"), controller).top(), 0);
-            QTRY_VERIFY(controller->width() < expandedWidths.at(1));
             QCOMPARE(columns->sizes().first(), expandedWidths.first());
-            QCOMPARE(captions->width(), expandedWidths.last() + expandedWidths.at(1) - controller->width());
-            QCOMPARE(window.size(), expandedWindow);
-            QTest::mouseClick(collapse, Qt::LeftButton);
+            QCOMPARE(captions->width(), expandedWidths.last());
+            QCOMPARE(view->viewport()->width(), transcriptViewport);
+            QCOMPARE(window.size(), QSize(expandedWidths.first() + divider->width() + expandedWidths.last(), expandedWindow.height()));
+            const auto dragDivider = [divider](int distance) {
+                const QPoint start(divider->width() / 2, divider->height() / 4);
+                QTest::mousePress(divider, Qt::LeftButton, {}, start);
+                QTest::mouseMove(divider, start + QPoint(distance, 0));
+                QTest::mouseRelease(divider, Qt::LeftButton, {}, start);
+            };
+            dragDivider(24);
+            QTRY_COMPARE(columns->sizes().first(), expandedWidths.first() + 24);
+            QVERIFY(controller->meetingsCollapsed());
+            dragDivider(-24);
+            QTRY_COMPARE(columns->sizes().first(), expandedWidths.first());
+            expand->setFocus();
+            QTest::keyClick(expand, Qt::Key_Space);
             QTRY_VERIFY(!controller->meetingsCollapsed());
+            QVERIFY(!expand->isVisible() && collapse->hasFocus());
             QVERIFY(collapse->text().contains(QStringLiteral("Meetings (0/0)")));
             QVERIFY(window.findChild<QWidget*>("pageRoot")->isVisible());
             QTRY_COMPARE(columns->sizes(), expandedWidths);
@@ -851,6 +1062,18 @@ private slots:
             columns->setSizes({950, 324, 100});
             QCoreApplication::processEvents();
             verifyColumnsFit(workspace);
+            toggleLog->click();
+            const auto narrowWidths = columns->sizes();
+            const QSize narrowWindow = window.size();
+            collapse->click();
+            QTRY_COMPARE(captions->width(), narrowWidths.last());
+            QCOMPARE(columns->sizes().first(), narrowWidths.first());
+            QCOMPARE(window.size(), QSize(narrowWidths.first() + divider->width() + narrowWidths.last(), narrowWindow.height()));
+            auto* chromeWindows = logPanel->findChild<QComboBox*>("chromeWindowCombo");
+            QVERIFY(chromeWindows && logPanel->rect().contains(boundsIn(chromeWindows, logPanel)));
+            QTest::mouseClick(expand, Qt::LeftButton);
+            QCOMPARE(columns->sizes(), narrowWidths);
+            toggleLog->click();
             auto* mic = captions->findChild<QSlider*>("microphoneVolume");
             QVERIFY(mic);
             QVERIFY(boundsIn(mic, captions).top() > boundsIn(send, captions).bottom());
@@ -867,6 +1090,7 @@ private slots:
             QTRY_VERIFY(controller->width() > 360);
             savedMeetingsWidth = controller->width();
             collapse->click();
+            savedCollapsedWidths = columns->sizes();
             auto* pingToggle = window.findChild<QToolButton*>("showPingStatus");
             QVERIFY(pingToggle && pingToggle->isChecked());
             pingToggle->click();
@@ -877,6 +1101,7 @@ private slots:
             QVERIFY(!layout.value("geometry").toByteArray().isEmpty());
             QVERIFY(layout.value("meetingsCollapsed").toBool());
             QCOMPARE(layout.value("meetingColumnWidth").toInt(), savedMeetingsWidth);
+            QCOMPARE(layout.value("collapsedDividerWidth").toInt(), columns->handleWidth());
         }
         QVERIFY(formerView.isNull());
         settings.theme = UiTheme::Light;
@@ -888,15 +1113,35 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(&reopened));
         verifyColumnsFit(workspace);
         auto* controller = workspace->findChild<MeetingControllerPane*>();
+        auto* columns = workspace->findChild<QSplitter*>("workspaceColumns");
         QVERIFY(controller->meetingsCollapsed());
+        QCOMPARE(columns->sizes(), savedCollapsedWidths);
         controller->setMeetingsCollapsed(false);
         QTRY_COMPARE(controller->width(), savedMeetingsWidth);
         QCOMPARE(workspace->findChild<CaptionView*>()->viewport()->grab(QRect(0, 0, 8, 8)).toImage().pixelColor(1, 1),
                  QColor(Qt::white));
+        const QSize normalWindow = reopened.size();
+        const auto normalWidths = columns->sizes();
         reopened.showMaximized();
         QTRY_VERIFY(reopened.isMaximized());
         QCoreApplication::processEvents();
         verifyColumnsFit(workspace);
+        const QSize maximizedWindow = reopened.size();
+        const auto maximizedWidths = columns->sizes();
+        controller->setMeetingsCollapsed(true);
+        QCOMPARE(reopened.size(), maximizedWindow);
+        verifyMeetingsDivider(columns);
+        QCOMPARE(columns->sizes(), QList<int>({maximizedWindow.width() - columns->handleWidth() - maximizedWidths.last(),
+                                               0, maximizedWidths.last()}));
+        controller->setMeetingsCollapsed(false);
+        QCOMPARE(columns->sizes(), maximizedWidths);
+        controller->setMeetingsCollapsed(true);
+        reopened.showNormal();
+        QTRY_COMPARE(reopened.size(), QSize(normalWidths.first() + columns->handleWidth() + normalWidths.last(), normalWindow.height()));
+        QCOMPARE(columns->sizes(), QList<int>({normalWidths.first(), 0, normalWidths.last()}));
+        controller->setMeetingsCollapsed(false);
+        QCOMPARE(reopened.size(), normalWindow);
+        QCOMPARE(columns->sizes(), normalWidths);
     }
 };
 

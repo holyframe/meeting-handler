@@ -7,6 +7,7 @@
 #include <QRegularExpression>
 #include <QStringList>
 #include <QUrl>
+#include <QUrlQuery>
 
 #include <utility>
 #include <vector>
@@ -30,11 +31,14 @@ QUrl parseBrowserUrl(QString text)
         return {};
 
     // Chrome's address bar hides the https:// scheme.
-    if (!text.contains("://"))
+    const bool hasScheme = text.contains("://");
+    if (text.startsWith("about:", Qt::CaseInsensitive))
+        return QUrl(text, QUrl::StrictMode);
+    if (!hasScheme)
         text.prepend("https://");
 
     const QUrl url(text, QUrl::StrictMode);
-    if (!url.isValid() || !url.host().contains('.'))
+    if (!url.isValid() || url.host().isEmpty() || (!hasScheme && !url.host().contains('.') && url.host() != "localhost"))
         return {};
 
     return url;
@@ -54,13 +58,13 @@ bool isZoomHost(const QString& host)
     return false;
 }
 
-QString zoomMeetingId(const QUrl& url)
+QString pageTitle(const QString& accessibleName)
 {
-    static const QRegularExpression meetingPath(
-        "^/wc/(?:join/)?(\\d{9,12})(?:/|$)");
-
-    const QRegularExpressionMatch match = meetingPath.match(url.path());
-    return match.hasMatch() ? match.captured(1) : QString();
+    // Chrome adds media state to the accessible name of a tab that is in a call.
+    static const QRegularExpression mediaStatus(QStringLiteral(
+        R"((?: - (?:Audio (?:playing|muted)|(?:Camera(?: and microphone)?|Microphone) recording|(?:Tab|Desktop) content shared))+$)"),
+        QRegularExpression::CaseInsensitiveOption);
+    return accessibleName.simplified().remove(mediaStatus);
 }
 
 QJsonObject failure(const QString& error)
@@ -71,20 +75,22 @@ QJsonObject failure(const QString& error)
     };
 }
 
-void applyAddress(QJsonObject& tab, const QUrl& url, const QString& source)
-{
-    tab.insert("addressKnown", true);
-    tab.insert("urlSource", source);
-    tab.insert("host", url.host());
-
-    const QString meetingId = isZoomHost(url.host()) ? zoomMeetingId(url) : QString();
-    tab.insert("zoomMeeting", !meetingId.isEmpty());
-    if (!meetingId.isEmpty())
-        tab.insert("meetingId", meetingId);
-}
-
 QUrl readWindowAddress(const BrowserUi& ui, QString* source)
 {
+    // Prefer the loaded page when the omnibox contains an unsubmitted address.
+    for (const auto& document : ui.documents)
+    {
+        if (readBooleanProperty(document.Get(), UIA_IsOffscreenPropertyId))
+            continue;
+        const QUrl url = parseBrowserUrl(
+            readStringProperty(document.Get(), UIA_ValueValuePropertyId));
+        if (url.isValid())
+        {
+            *source = "document";
+            return url;
+        }
+    }
+
     for (const auto& edit : ui.edits)
     {
         const QUrl url = parseBrowserUrl(
@@ -92,20 +98,6 @@ QUrl readWindowAddress(const BrowserUi& ui, QString* source)
         if (url.isValid())
         {
             *source = "addressBar";
-            return url;
-        }
-    }
-
-    for (const auto& document : ui.documents)
-    {
-        if (readBooleanProperty(document.Get(), UIA_IsOffscreenPropertyId))
-            continue;
-
-        const QUrl url = parseBrowserUrl(
-            readStringProperty(document.Get(), UIA_ValueValuePropertyId));
-        if (url.isValid())
-        {
-            *source = "document";
             return url;
         }
     }
@@ -136,15 +128,24 @@ QJsonObject makeTabRecord(
         runtimeId = QString("index-%1").arg(index);
     tab.insert("tabRuntimeId", runtimeId);
     tab.insert("selected", selected);
-    tab.insert("addressKnown", false);
-    tab.insert("zoomMeeting", false);
-
-    const QUrl ownUrl = parseBrowserUrl(
-        readStringProperty(element, UIA_ValueValuePropertyId));
-    if (ownUrl.isValid())
-        applyAddress(tab, ownUrl, "tab");
-    else if (selected && windowUrl.isValid())
-        applyAddress(tab, windowUrl, windowUrlSource);
+    QUrl address = parseBrowserUrl(readStringProperty(element, UIA_ValueValuePropertyId));
+    if (address.isEmpty())
+        address = parseBrowserUrl(readStringProperty(element, UIA_LegacyIAccessibleValuePropertyId));
+    QString source = "tab";
+    if (address.isEmpty() && selected) {
+        address = windowUrl;
+        source = windowUrlSource;
+    }
+    tab.insert("addressKnown", !address.isEmpty());
+    if (!address.isEmpty()) {
+        tab.insert("host", address.host());
+        tab.insert("urlSource", source);
+    }
+    QString meetingId;
+    // Use the tab's own name, even when the window title is used as its display label.
+    tab.insert("zoomMeeting", ActiveTabPicker::isZoomMeetingTab(address, name, &meetingId));
+    if (!meetingId.isEmpty())
+        tab.insert("meetingId", meetingId);
 
     return tab;
 }
@@ -153,6 +154,36 @@ QJsonObject makeTabRecord(
 ActiveTabPicker::ActiveTabPicker(IUIAutomation* automation)
 {
     automation_ = automation;
+}
+
+bool ActiveTabPicker::isZoomMeetingTab(const QUrl& address, const QString& tabTitle, QString* meetingId)
+{
+    if (meetingId)
+        meetingId->clear();
+    if (address.isEmpty()) {
+        // Background tabs often expose only their title. Match Zoom's session and launch
+        // titles in full so searches, documentation and calendar entries stay out.
+        static const QRegularExpression sessionTitle(
+            QStringLiteral(R"(^(?:Zoom (?:Meeting|Webinar)(?: - Zoom)?|(?:Launch|Join|Start) (?:Meeting|Webinar) - Zoom)$)"),
+            QRegularExpression::CaseInsensitiveOption);
+        return sessionTitle.match(pageTitle(tabTitle)).hasMatch();
+    }
+    if ((address.scheme() != "https" && address.scheme() != "http") || !isZoomHost(address.host()))
+        return false;
+
+    static const QRegularExpression numberedPath(QStringLiteral(R"(^/(?:wc/(?:(?:join|start)/)?|[jsw]/)([0-9]{9,12})(?:/|$))"));
+    static const QRegularExpression validId(QStringLiteral(R"(^[0-9]{9,12}$)"));
+    static const QRegularExpression personalLink(QStringLiteral(R"(^/my/[a-zA-Z0-9][a-zA-Z0-9._-]*/?$)"));
+    const QString path = address.path();
+    QString id = numberedPath.match(path).captured(1);
+    if (id.isEmpty() && (path == "/wc/launch" || path == "/join")) {
+        const QString number = QUrlQuery(address).queryItemValue("confno");
+        if (validId.match(number).hasMatch())
+            id = number;
+    }
+    if (meetingId)
+        *meetingId = id;
+    return !id.isEmpty() || personalLink.match(path).hasMatch();
 }
 
 QJsonObject ActiveTabPicker::listChromeTabs() const
@@ -249,8 +280,11 @@ QJsonObject ActiveTabPicker::readWindowTabs(
                 ui.tabItems[static_cast<std::size_t>(index)].Get(),
                 UIA_SelectionItemIsSelectedPropertyId))
         {
+            if (selectedIndex >= 0) {
+                selectedIndex = -1; // A multi-selection needs the active page title below.
+                break;
+            }
             selectedIndex = index;
-            break;
         }
     }
 
@@ -266,10 +300,13 @@ QJsonObject ActiveTabPicker::readWindowTabs(
             const QString name = readStringProperty(
                 ui.tabItems[static_cast<std::size_t>(index)].Get(),
                 UIA_NamePropertyId);
-            if (name.startsWith(shownTitle))
+            if (!shownTitle.isEmpty() && pageTitle(name) == shownTitle)
             {
+                if (selectedIndex >= 0) {
+                    selectedIndex = -1; // Duplicate titles cannot identify the address bar's tab.
+                    break;
+                }
                 selectedIndex = index;
-                break;
             }
         }
     }

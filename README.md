@@ -1,8 +1,10 @@
 # Meeting Handler
 
-Meeting Handler is a C++20 Windows app. Its Qt Widgets window has three resizable columns. From left to right, these hold the caption targets, the meeting controls, and the live transcript with its toolbar. Collapsing Meetings gives the transcript more room. The toolbar opens the shared activity log below all three columns.
+Meeting Handler is a C++20 Windows app. Its Qt Widgets window has three resizable columns. From left to right, these hold the caption targets, the meeting controls, and the live transcript with its toolbar. Collapsing Meetings shrinks the window and preserves both neighboring panes' widths. When maximized, the Caption Target sidebar takes the freed space. Click the five dots centered on the thin vertical splitter to expand Meetings. Drag the splitter above or below the dots to resize the sidebar and transcript. The toolbar opens the shared activity log below all three columns.
 
-Font, size, and line spacing sit above the transcript. Below it, the microphone icon shows the Windows input mute state. Click the speaker icon to mute or unmute playback. Each slider adjusts its device's volume, and the bar beneath it shows live audio activity.
+Font, size, and line spacing sit above the transcript. Below it, click the microphone icon to mute or unmute the selected Windows microphone. Click the speaker icon to mute or unmute playback. Each slider adjusts its device's volume, and the bar beneath it shows live audio activity.
+
+In **Settings → Microphone**, choose a recording device by name or select **Windows default** to follow the system setting. A selected microphone becomes available again when you reconnect it. Under **Microphone mute shortcut**, click **Change**, press the keys you want, then click **OK**. The shortcut toggles that microphone even while another app has focus. **Clear** removes the shortcut.
 
 While the main window is focused, press **Up** or **Down** to adjust the default Windows speaker volume by one step. Hold a key to repeat. Text fields, lists, sliders, and menus keep their arrow-key navigation. The shortcut is enabled by default and can be turned off in **Settings → Use Up and Down arrows for speaker volume**.
 
@@ -34,10 +36,12 @@ The build requires Visual Studio 2022 C++ tools with a Windows SDK, CMake 3.24 o
 | `scripts/` | Windows build and deployment implementation used by `build.bat`. |
 | `docs/` and `licenses/` | Original dashboard design reference and third-party attribution. |
 
-The root `CMakeLists.txt` defines the executable, its shared implementation, its resources, and every test. Qt Widgets provides the controls, dialogs, and layout throughout the app. The transcript uses Qt text layout and painting for word wrapping, hit testing, and selection. Windows APIs handle caption capture, browser automation, foreground-window tracking, and the global Send shortcut. Batch commands start a background worker from the same executable.
+The root `CMakeLists.txt` defines the executable, its shared implementation, its resources, and every test. Qt Widgets provides the controls, dialogs, and layout throughout the app. The transcript uses Qt text layout and painting for word wrapping, hit testing, and selection. Windows APIs handle caption capture, browser automation, foreground-window tracking, and the global Send and microphone mute shortcuts. Batch commands start a background worker from the same executable.
 
 ## Settings and meeting state
 
 Caption preferences use `LiveCaptionView.ini` beside the executable. The default transcript is `captions.txt`, and the default save folder is `script`. The caption sidebar width and toolbar panel height use the caption INI. Window geometry, the Meetings column width, and its collapsed state use `MeetingHandler.ini`.
+
+**Pick up meeting tabs** lists Zoom meeting and join pages in Chrome, grouped by profile. When Chrome hides a tab's address, the picker recognizes standard Zoom meeting and webinar titles. Showing a tab in Chrome before opening the picker lets it identify a meeting with a custom title.
 
 The controller keeps imported meeting tabs in memory for the session. Refresh reads microphone and computer-audio state from Chrome. Sound Off disconnects Zoom computer audio in both directions. The controller tests use simulated audio transitions and exercise the worker process. [Dashboard design reference](docs/dashboard-reference.png)

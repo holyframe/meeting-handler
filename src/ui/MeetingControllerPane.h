@@ -41,6 +41,7 @@ public:
 signals:
     void statusMessageChanged(const QString& message);
     void logVisibilityChanged(bool visible);
+    void meetingsCollapseAboutToChange();
     void meetingsCollapsedChanged(bool collapsed);
     void scanRequested();
     void inspectRequested(quintptr hwndValue);
