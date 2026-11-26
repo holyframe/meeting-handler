@@ -284,6 +284,12 @@ private slots:
         QCOMPARE(output->horizontalScrollBarPolicy(), Qt::ScrollBarAlwaysOff);
 
         QSignalSpy starts(ping, &QProcess::started);
+        QList<QColor> pingBackgrounds;
+        const QColor warningRed("#861e2b");
+        connect(output, &QPlainTextEdit::textChanged, output, [&] {
+            if (!output->toPlainText().isEmpty())
+                pingBackgrounds.append(output->palette().color(QPalette::Base));
+        });
         showWithPingFixture(window);
         QVERIFY(QTest::qWaitForWindowExposed(&window));
         QTRY_COMPARE(starts.size(), 1);
@@ -300,14 +306,19 @@ private slots:
         QVERIFY(sidebar->rect().contains(panel->geometry()));
         QVERIFY(panel->rect().contains(output->geometry()));
         const auto expected = QStringList({
-            unavailable,
+            "Unreachable",
             "bytes=32 time=17ms TTL=117",
             "bytes=32 time<1ms TTL=128",
             "bytes=64 time=23ms TTL=59",
             QStringLiteral("bytes=— time=9ms TTL=—"),
-            unavailable
+            "Unreachable"
         }).join(u'\n');
         QTRY_COMPARE(output->toPlainText(), expected);
+        QCOMPARE(pingBackgrounds.size(), 6);
+        QCOMPARE(pingBackgrounds.first(), warningRed);
+        QVERIFY(pingBackgrounds.at(1) != warningRed);
+        QCOMPARE(pingBackgrounds.last(), warningRed);
+        QCOMPARE(output->palette().color(QPalette::Text), QColor("#ffe2e5"));
         QCOMPARE(starts.size(), 1);
         QTest::keyClick(toggle, Qt::Key_Space);
         QVERIFY(panel->isHidden() && !toggle->isChecked());
@@ -336,7 +347,7 @@ private slots:
         ping->setProgram(temp.filePath("missing-ping.exe"));
         toggle->click();
         QTRY_VERIFY(retry->isActive());
-        QCOMPARE(output->toPlainText(), unavailable);
+        QCOMPARE(output->toPlainText(), QStringLiteral("Ping unavailable"));
         QVERIFY(output->toolTip().contains("Could not start ping"));
         QCOMPARE(columns->sizes(), widerWidths);
         QCOMPARE(panel->width(), sidebar->width());

@@ -16,31 +16,21 @@ AudioLevelControl::AudioLevelControl(AudioEndpoint endpoint, QWidget* parent)
     auto* row = new QHBoxLayout(this);
     row->setContentsMargins(0, 0, 0, 0);
     row->setSpacing(4);
-    QWidget* icon;
-    if (mic) {
-        microphoneStatus_ = new QLabel(this);
-        microphoneStatus_->setObjectName("microphoneStatus");
-        microphoneStatus_->setAlignment(Qt::AlignCenter);
-        microphoneStatus_->setTextInteractionFlags(Qt::NoTextInteraction);
-        icon = microphoneStatus_;
-    } else {
-        speakerMute_ = new QToolButton(this);
-        speakerMute_->setObjectName("speakerMute");
-        speakerMute_->setCheckable(true);
-        speakerMute_->setFocusPolicy(Qt::StrongFocus);
-        speakerMute_->setCursor(Qt::PointingHandCursor);
-        connect(speakerMute_, &QToolButton::toggled, this, [this](bool muted) {
-            // Keep the checked state at the last Windows readback.
-            const QSignalBlocker guard(speakerMute_);
-            speakerMute_->setChecked(levels_.muted.value_or(false));
-            if (levels_.muted.has_value() && muted != *levels_.muted && !levels_.deviceId.isEmpty())
-                emit muteRequested(AudioEndpoint::Speakers, levels_.deviceId, muted);
-        });
-        icon = speakerMute_;
-    }
-    icon->setFixedSize(23, 23);
-    icon->setFont(QFont("Segoe MDL2 Assets", 11));
-    row->addWidget(icon);
+    muteButton_ = new QToolButton(this);
+    muteButton_->setObjectName(prefix + "Mute");
+    muteButton_->setCheckable(true);
+    muteButton_->setFocusPolicy(Qt::StrongFocus);
+    muteButton_->setCursor(Qt::PointingHandCursor);
+    muteButton_->setFixedSize(23, 23);
+    muteButton_->setFont(QFont("Segoe MDL2 Assets", 11));
+    connect(muteButton_, &QToolButton::toggled, this, [this](bool muted) {
+        // Keep the checked state at the last Windows readback.
+        const QSignalBlocker guard(muteButton_);
+        muteButton_->setChecked(levels_.muted.value_or(false));
+        if (levels_.muted.has_value() && muted != *levels_.muted && !levels_.deviceId.isEmpty())
+            emit muteRequested(endpoint_, levels_.deviceId, muted);
+    });
+    row->addWidget(muteButton_);
 
     auto* tracks = new QVBoxLayout;
     tracks->setSpacing(1);
@@ -93,24 +83,21 @@ void AudioLevelControl::syncSlider() {
 void AudioLevelControl::syncMuteControl() {
     const bool muted = levels_.muted.value_or(false);
     const bool available = levels_.muted.has_value() && !levels_.deviceId.isEmpty();
-    if (microphoneStatus_) {
-        QString status = muted ? tr("Windows microphone is muted") : tr("Windows microphone is on");
-        if (!available) status = tr("Windows microphone status unavailable");
-        microphoneStatus_->setText(QChar(muted ? 0xEC54 : 0xE720));
-        microphoneStatus_->setAccessibleName(status);
-        microphoneStatus_->setToolTip(status);
-        microphoneStatus_->setEnabled(available);
-        return;
-    }
-    const QString action = muted ? tr("Unmute Windows sound") : tr("Mute Windows sound");
-    const QSignalBlocker guard(speakerMute_);
+    const QSignalBlocker guard(muteButton_);
     // Cancel a press if its device or action changed before release.
-    speakerMute_->setDown(false);
-    speakerMute_->setChecked(muted);
-    speakerMute_->setEnabled(available);
-    speakerMute_->setText(QChar(muted ? 0xE74F : 0xE767));
-    speakerMute_->setAccessibleName(action);
-    speakerMute_->setToolTip(available ? action : tr("Windows mute control unavailable"));
+    muteButton_->setDown(false);
+    muteButton_->setChecked(muted);
+    muteButton_->setEnabled(available);
+    QString action;
+    if (endpoint_ == AudioEndpoint::Microphone) {
+        muteButton_->setText(QChar(muted ? 0xEC54 : 0xE720));
+        action = muted ? tr("Unmute Windows microphone") : tr("Mute Windows microphone");
+    } else {
+        muteButton_->setText(QChar(muted ? 0xE74F : 0xE767));
+        action = muted ? tr("Unmute Windows sound") : tr("Mute Windows sound");
+    }
+    muteButton_->setAccessibleName(action);
+    muteButton_->setToolTip(available ? action : tr("Windows mute control unavailable"));
 }
 
 void AudioLevelControl::setLevels(AudioEndpoint endpoint, const AudioLevels& levels) {

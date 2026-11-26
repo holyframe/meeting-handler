@@ -26,8 +26,7 @@ private:
     AudioLevels levels_;
     QString dragDeviceId_;
     QString description_;
-    QLabel* microphoneStatus_ = nullptr;
-    QToolButton* speakerMute_ = nullptr;
+    QToolButton* muteButton_;
     QLabel* percent_;
     QSlider* slider_;
     QProgressBar* peak_;

@@ -18,6 +18,7 @@
 class CaptionTargetList;
 class CaptionView;
 class WindowPickOutline;
+class WindowsAudioLevels;
 class QBoxLayout;
 class QCheckBox;
 class QComboBox;
@@ -44,6 +45,8 @@ signals:
     void logLine(const QString& text);
     void logToggled(bool visible);
     void audioMonitoringChanged(bool enabled);
+    void microphoneDeviceSelected(const QString& deviceId);
+    void microphoneMuteToggleRequested();
     void speakerVolumeStepRequested(bool increase);
     void headerPaletteChanged(const QPalette& palette);
 
@@ -66,6 +69,7 @@ private:
     void ApplyTheme();
     void ApplyTypography();
     void UpdateHotkeyRegistration();
+    void UnregisterHotkeys();
     void QueueHotkeySend();
     bool HotkeyChordReleased() const;
     void UpdateWindowTitle();
@@ -98,6 +102,7 @@ private:
     bool m_initialized = false;
     bool m_restoreToolbar = true;
     bool m_hotkeyRegistered = false;
+    bool m_microphoneHotkeyRegistered = false;
     bool m_windowPickDrag = false;
     bool m_windowPickUpdating = false;
     WebInputPickState m_windowPickState = WebInputPickState::NoWindow;
@@ -108,6 +113,7 @@ private:
     QWidget* m_targetSidebar = nullptr;
     QBoxLayout* m_toolbarGroups = nullptr;
     QThread m_audioThread;
+    WindowsAudioLevels* m_audio = nullptr;
     QShortcut* m_volumeUp = nullptr;
     QShortcut* m_volumeDown = nullptr;
     QSplitter* m_rows = nullptr;

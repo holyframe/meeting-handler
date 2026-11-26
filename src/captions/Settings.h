@@ -25,6 +25,11 @@ struct Settings {
     bool         compactView  = false;
     bool         alwaysOnTop  = false;
     bool         speakerVolumeArrowKeys = true;
+    // An empty device ID follows the Windows default recording device.
+    std::wstring microphoneDeviceId;
+    std::wstring microphoneDeviceName;
+    unsigned microphoneHotkeyModifiers = 0;
+    unsigned microphoneHotkeyVirtualKey = 0;
     std::wstring transcriptPath;   // empty means "captions.txt" beside the exe
     // Folder used by the Save button. Empty means "script" beside the exe.
     std::wstring saveFolder;

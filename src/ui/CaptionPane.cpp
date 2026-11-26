@@ -128,6 +128,7 @@ CaptionPane::CaptionPane(QWidget* targetSidebar, QWidget* parent,
 }
 
 CaptionPane::~CaptionPane() {
+    UnregisterHotkeys();
     m_audioThread.quit();
     m_audioThread.wait();
     qApp->removeNativeEventFilter(this);
@@ -137,7 +138,6 @@ CaptionPane::~CaptionPane() {
     // The sidebar and transcript are siblings. Release any surviving tiles before their picker.
     delete m_targets.data();
     m_activeWindowFollower.Stop();
-    if (m_hotkeyRegistered) ::UnregisterHotKey(m_frame, HOTKEY_SEND);
     if (m_initialized) m_settings.Save();
 }
 
@@ -298,11 +298,13 @@ QWidget* CaptionPane::createAudioControls(QWidget* toolbar) {
     auto* row = new QHBoxLayout(group);
     row->setContentsMargins(0, 0, 0, 0);
     row->setSpacing(12);
-    auto* audio = new WindowsAudioLevels;
-    audio->moveToThread(&m_audioThread);
-    connect(&m_audioThread, &QThread::finished, audio, &QObject::deleteLater);
-    connect(this, &CaptionPane::audioMonitoringChanged, audio, &WindowsAudioLevels::setMonitoring);
-    connect(this, &CaptionPane::speakerVolumeStepRequested, audio, &WindowsAudioLevels::stepSpeakerVolume);
+    m_audio = new WindowsAudioLevels;
+    m_audio->moveToThread(&m_audioThread);
+    connect(&m_audioThread, &QThread::finished, m_audio, &QObject::deleteLater);
+    connect(this, &CaptionPane::audioMonitoringChanged, m_audio, &WindowsAudioLevels::setMonitoring);
+    connect(this, &CaptionPane::microphoneDeviceSelected, m_audio, &WindowsAudioLevels::selectMicrophone);
+    connect(this, &CaptionPane::microphoneMuteToggleRequested, m_audio, &WindowsAudioLevels::toggleMicrophoneMute);
+    connect(this, &CaptionPane::speakerVolumeStepRequested, m_audio, &WindowsAudioLevels::stepSpeakerVolume);
     const auto volumeShortcut = [this](Qt::Key key) {
         return new QShortcut(QKeySequence(key), this, [this, key] {
             emit speakerVolumeStepRequested(key == Qt::Key_Up);
@@ -311,7 +313,7 @@ QWidget* CaptionPane::createAudioControls(QWidget* toolbar) {
     m_volumeUp = volumeShortcut(Qt::Key_Up);
     m_volumeDown = volumeShortcut(Qt::Key_Down);
     connect(qApp, &QApplication::focusChanged, this, &CaptionPane::updateVolumeShortcuts);
-    connect(audio, &WindowsAudioLevels::writeFailed, this, [this, group](AudioEndpoint endpoint) {
+    connect(m_audio, &WindowsAudioLevels::writeFailed, this, [this, group](AudioEndpoint endpoint) {
         const QString message = endpoint == AudioEndpoint::Microphone
             ? tr("Windows could not apply the microphone change.") : tr("Windows could not apply the sound output change.");
         emit logLine(message);
@@ -320,9 +322,9 @@ QWidget* CaptionPane::createAudioControls(QWidget* toolbar) {
     for (auto endpoint : {AudioEndpoint::Microphone, AudioEndpoint::Speakers}) {
         auto* control = new AudioLevelControl(endpoint, group);
         row->addWidget(control);
-        connect(audio, &WindowsAudioLevels::levelsChanged, control, &AudioLevelControl::setLevels);
-        connect(control, &AudioLevelControl::volumeRequested, audio, &WindowsAudioLevels::setVolume);
-        connect(control, &AudioLevelControl::muteRequested, audio, &WindowsAudioLevels::setMuted);
+        connect(m_audio, &WindowsAudioLevels::levelsChanged, control, &AudioLevelControl::setLevels);
+        connect(control, &AudioLevelControl::volumeRequested, m_audio, &WindowsAudioLevels::setVolume);
+        connect(control, &AudioLevelControl::muteRequested, m_audio, &WindowsAudioLevels::setMuted);
     }
     m_audioThread.setObjectName("Windows audio levels");
     m_audioThread.start();
@@ -342,6 +344,7 @@ void CaptionPane::updateVolumeShortcuts() {
 bool CaptionPane::initialize(const Settings& settings) {
     if (m_initialized) return true;
     m_settings = settings;
+    emit microphoneDeviceSelected(QString::fromStdWString(settings.microphoneDeviceId));
     updateVolumeShortcuts();
     m_frame = reinterpret_cast<HWND>(window()->winId());
     if (!m_frame) return false;
@@ -465,14 +468,25 @@ void CaptionPane::wheelEvent(QWheelEvent* event) {
     event->accept();
 }
 
-void CaptionPane::UpdateHotkeyRegistration() {
+void CaptionPane::UnregisterHotkeys() {
     m_hotkeyTimer.stop();
     if (m_hotkeyRegistered) ::UnregisterHotKey(m_frame, HOTKEY_SEND);
+    if (m_microphoneHotkeyRegistered) ::UnregisterHotKey(m_frame, HOTKEY_MICROPHONE_MUTE);
+    m_hotkeyRegistered = false;
+    m_microphoneHotkeyRegistered = false;
+}
+
+void CaptionPane::UpdateHotkeyRegistration() {
     m_hotkeyRegistered = m_settings.hotkeyVirtualKey &&
         ::RegisterHotKey(m_frame, HOTKEY_SEND, m_settings.hotkeyModifiers | MOD_NOREPEAT, m_settings.hotkeyVirtualKey);
+    m_microphoneHotkeyRegistered = m_settings.microphoneHotkeyVirtualKey &&
+        ::RegisterHotKey(m_frame, HOTKEY_MICROPHONE_MUTE,
+                         m_settings.microphoneHotkeyModifiers | MOD_NOREPEAT, m_settings.microphoneHotkeyVirtualKey);
     UpdateWindowTitle();
     if (m_settings.hotkeyVirtualKey && !m_hotkeyRegistered)
         SetStatus(L"The Send hotkey is already in use by another app.");
+    if (m_settings.microphoneHotkeyVirtualKey && !m_microphoneHotkeyRegistered)
+        SetStatus(L"The microphone mute shortcut is unavailable. Choose another shortcut in Settings.");
 }
 
 bool CaptionPane::nativeEventFilter(const QByteArray&, void* message, qintptr* result) {
@@ -483,8 +497,11 @@ bool CaptionPane::nativeEventFilter(const QByteArray&, void* message, qintptr* r
         if (::ClientToScreen(msg->hwnd, &point)) m_pickReleasePoint = point;
     }
     if (msg->hwnd != m_frame) return false;
-    if (msg->message == WM_HOTKEY && msg->wParam == HOTKEY_SEND) {
-        QueueHotkeySend();
+    if (msg->message == WM_HOTKEY) {
+        if (msg->wParam == HOTKEY_SEND) QueueHotkeySend();
+        else if (msg->wParam == HOTKEY_MICROPHONE_MUTE && m_microphoneHotkeyRegistered)
+            emit microphoneMuteToggleRequested();
+        else return false;
         if (result) *result = 0;
         return true;
     }
@@ -654,11 +671,16 @@ void CaptionPane::UpdateListeningButton() {
 
 void CaptionPane::OnSettings() {
     const auto previous = m_settings.captionSource;
-    if (!ShowSettingsDialog(window(), m_settings)) return;
+    const auto previousMicrophone = m_settings.microphoneDeviceId;
+    UnregisterHotkeys();
+    const bool accepted = ShowSettingsDialog(window(), m_settings, *m_audio);
+    if (m_settings.microphoneDeviceId != previousMicrophone)
+        emit microphoneDeviceSelected(QString::fromStdWString(m_settings.microphoneDeviceId));
+    UpdateHotkeyRegistration();
+    if (!accepted) return;
     updateVolumeShortcuts();
     m_settings.Save();
     ApplyTheme();
-    UpdateHotkeyRegistration();
     if (previous != m_settings.captionSource) {
         m_windowsCaptionStartTimer.stop();
         m_engine.Stop();

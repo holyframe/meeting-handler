@@ -1,5 +1,6 @@
 #include "SettingsDialog.h"
 #include "CaptionTheme.h"
+#include "windows/WindowsAudioLevels.h"
 
 #include <windows.h>
 #include <QCheckBox>
@@ -15,6 +16,7 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QStyleHints>
+#include <QTimer>
 #include <QVBoxLayout>
 
 QString captionHotkeyName(unsigned modifiers, unsigned key) {
@@ -70,10 +72,14 @@ namespace {
 // layout-dependent punctuation and extended keys, can round-trip through RegisterHotKey.
 class HotkeyEdit final : public QLineEdit {
 public:
-    HotkeyEdit(const Settings& settings, QWidget* parent)
-        : QLineEdit(parent), modifiers(settings.hotkeyModifiers), key(settings.hotkeyVirtualKey) {
-        setObjectName("sendHotkey");
+    HotkeyEdit(unsigned initialModifiers, unsigned initialKey, QWidget* parent)
+        : QLineEdit(parent), modifiers(initialModifiers), key(initialKey) {
         setReadOnly(true);
+        setText(captionHotkeyName(modifiers, key));
+    }
+    void clearShortcut() {
+        modifiers = 0;
+        key = 0;
         setText(captionHotkeyName(modifiers, key));
     }
     unsigned modifiers;
@@ -102,9 +108,34 @@ protected:
         event->accept();
     }
 };
+
+void populateMicrophones(QComboBox* combo, const QList<MicrophoneDevice>& devices, const MicrophoneDevice& selected) {
+    combo->clear();
+    combo->addItem(QObject::tr("Windows default"), QVariant::fromValue(MicrophoneDevice{}));
+    int index = 0;
+    for (const auto& device : devices) {
+        combo->addItem(device.name, QVariant::fromValue(device));
+        if (device.id == selected.id) index = combo->count() - 1;
+    }
+    if (!selected.id.isEmpty() && index == 0) {
+        const QString name = selected.name.isEmpty() ? QObject::tr("Selected microphone") : selected.name;
+        combo->addItem(QObject::tr("%1 (unavailable)").arg(name), QVariant::fromValue(selected));
+        index = combo->count() - 1;
+    }
+    combo->setCurrentIndex(index);
 }
 
-bool ShowSettingsDialog(QWidget* owner, Settings& settings) {
+bool shortcutAvailable(HWND window, const HotkeyEdit* edit, unsigned previousModifiers, unsigned previousKey) {
+    if (!edit->key || (edit->key == previousKey && edit->modifiers == previousModifiers)) return true;
+    // The app releases its two global shortcuts while Settings is open.
+    constexpr int probeId = 1;
+    if (!::RegisterHotKey(window, probeId, edit->modifiers | MOD_NOREPEAT, edit->key)) return false;
+    ::UnregisterHotKey(window, probeId);
+    return true;
+}
+}
+
+bool ShowSettingsDialog(QWidget* owner, Settings& settings, WindowsAudioLevels& audio) {
     QDialog dialog(owner);
     dialog.setObjectName("captionSettings");
     dialog.setWindowTitle(QObject::tr("Settings"));
@@ -126,14 +157,54 @@ bool ShowSettingsDialog(QWidget* owner, Settings& settings) {
     QObject::connect(qGuiApp->styleHints(), &QStyleHints::colorSchemeChanged, &dialog, applyTheme);
     applyTheme();
 
-    auto* hotkey = new HotkeyEdit(settings, &dialog);
-    hotkey->setAccessibleName(QObject::tr("Send hotkey"));
-    auto* change = new QPushButton(QObject::tr("Change..."), &dialog);
-    QObject::connect(change, &QPushButton::clicked, hotkey, [hotkey] { hotkey->setFocus(); });
-    auto* hotkeyRow = new QHBoxLayout;
-    hotkeyRow->addWidget(hotkey, 1);
-    hotkeyRow->addWidget(change);
-    form->addRow(QObject::tr("Hotkey"), hotkeyRow);
+    const auto addShortcut = [&](const QString& label, const QString& objectName, unsigned mods, unsigned key) {
+        auto* edit = new HotkeyEdit(mods, key, &dialog);
+        edit->setObjectName(objectName);
+        edit->setAccessibleName(label);
+        edit->setToolTip(QObject::tr("Press the keys for a global shortcut."));
+        auto* change = new QPushButton(QObject::tr("Change..."), &dialog);
+        QObject::connect(change, &QPushButton::clicked, edit, [edit] { edit->setFocus(); });
+        auto* clear = new QPushButton(QObject::tr("Clear"), &dialog);
+        clear->setObjectName(objectName + "Clear");
+        QObject::connect(clear, &QPushButton::clicked, edit, &HotkeyEdit::clearShortcut);
+        auto* row = new QHBoxLayout;
+        row->addWidget(edit, 1);
+        row->addWidget(change);
+        row->addWidget(clear);
+        form->addRow(label, row);
+        return edit;
+    };
+    auto* hotkey = addShortcut(QObject::tr("Send shortcut"), "sendHotkey",
+                               settings.hotkeyModifiers, settings.hotkeyVirtualKey);
+
+    auto* microphone = new QComboBox(&dialog);
+    microphone->setObjectName("microphoneDevice");
+    microphone->setAccessibleName(QObject::tr("Microphone"));
+    microphone->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    microphone->setMinimumContentsLength(32);
+    form->addRow(QObject::tr("Microphone"), microphone);
+    populateMicrophones(microphone, {}, {QString::fromStdWString(settings.microphoneDeviceId),
+                                         QString::fromStdWString(settings.microphoneDeviceName)});
+    QList<MicrophoneDevice> lastDevices;
+    QObject::connect(&audio, &WindowsAudioLevels::microphonesListed, &dialog, [&](const QList<MicrophoneDevice>& devices) {
+        if (devices == lastDevices) return;
+        lastDevices = devices;
+        populateMicrophones(microphone, devices, microphone->currentData().value<MicrophoneDevice>());
+    });
+    QTimer rescan;
+    QObject::connect(&rescan, &QTimer::timeout, &audio, &WindowsAudioLevels::listMicrophones);
+    rescan.start(2000);
+    QMetaObject::invokeMethod(&audio, &WindowsAudioLevels::listMicrophones, Qt::QueuedConnection);
+
+    auto* micHotkey = addShortcut(QObject::tr("Microphone mute shortcut"), "microphoneHotkey",
+                                  settings.microphoneHotkeyModifiers, settings.microphoneHotkeyVirtualKey);
+    auto* shortcutError = new QLabel(&dialog);
+    shortcutError->setObjectName("shortcutError");
+    shortcutError->setWordWrap(true);
+    shortcutError->hide();
+    form->addRow(shortcutError);
+    QObject::connect(hotkey, &QLineEdit::textChanged, shortcutError, &QWidget::hide);
+    QObject::connect(micHotkey, &QLineEdit::textChanged, shortcutError, &QWidget::hide);
 
     auto* volumeArrows = new QCheckBox(QObject::tr("Use Up and Down arrows for speaker volume"), &dialog);
     volumeArrows->setObjectName("speakerVolumeArrowKeys");
@@ -162,7 +233,20 @@ bool ShowSettingsDialog(QWidget* owner, Settings& settings) {
     form->addRow(QObject::tr("Save folder"), folderRow);
     form->addRow(QString(), new QLabel(QObject::tr("Save creates a timestamped file named after the picked tab.")));
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+        const auto window = reinterpret_cast<HWND>(dialog.winId());
+        if (micHotkey->key && micHotkey->key == hotkey->key && micHotkey->modifiers == hotkey->modifiers)
+            shortcutError->setText(QObject::tr("Choose different shortcuts for Send and microphone mute."));
+        else if (!shortcutAvailable(window, hotkey, settings.hotkeyModifiers, settings.hotkeyVirtualKey))
+            shortcutError->setText(QObject::tr("The Send shortcut is unavailable. Choose another shortcut."));
+        else if (!shortcutAvailable(window, micHotkey, settings.microphoneHotkeyModifiers, settings.microphoneHotkeyVirtualKey))
+            shortcutError->setText(QObject::tr("The microphone mute shortcut is unavailable. Choose another shortcut."));
+        else {
+            dialog.accept();
+            return;
+        }
+        shortcutError->show();
+    });
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     form->addRow(buttons);
     if (dialog.exec() != QDialog::Accepted) return false;
@@ -172,6 +256,11 @@ bool ShowSettingsDialog(QWidget* owner, Settings& settings) {
     settings.saveFolder = folder->text().toStdWString();
     settings.hotkeyModifiers = hotkey->modifiers;
     settings.hotkeyVirtualKey = hotkey->key;
+    const auto selected = microphone->currentData().value<MicrophoneDevice>();
+    settings.microphoneDeviceId = selected.id.toStdWString();
+    settings.microphoneDeviceName = selected.name.toStdWString();
+    settings.microphoneHotkeyModifiers = micHotkey->modifiers;
+    settings.microphoneHotkeyVirtualKey = micHotkey->key;
     settings.speakerVolumeArrowKeys = volumeArrows->isChecked();
     return true;
 }

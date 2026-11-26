@@ -40,6 +40,9 @@ QWidget#windowsAudioControls QProgressBar {
 QWidget#windowsAudioControls QProgressBar::chunk { background: #25865f; border-radius: 2px; }
 QDialog { background-color: palette(window); }
 QPlainTextEdit#pingOutput { background: palette(base); color: palette(text); border: 1px solid palette(mid); }
+QWidget#pingStatusPanel[warning="true"],
+QWidget#pingStatusPanel[warning="true"] QPlainTextEdit#pingOutput { background: #861e2b; }
+QWidget#pingStatusPanel[warning="true"] QPlainTextEdit#pingOutput { color: #ffe2e5; border-color: #ee929c; }
 QComboBox QAbstractItemView, QFileDialog QAbstractItemView, QMenu {
     color: palette(text);
     background-color: palette(base);

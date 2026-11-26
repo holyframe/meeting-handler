@@ -4,11 +4,40 @@
 #include <mmdeviceapi.h>
 #include <endpointvolume.h>
 #include <wrl/client.h>
+#include <initguid.h>
+#include <functiondiscoverykeys_devpkey.h>
 #include <QTimer>
 
 using Microsoft::WRL::ComPtr;
 
 namespace {
+QString endpointId(IMMDevice* device) {
+    LPWSTR rawId = nullptr;
+    if (device) device->GetId(&rawId);
+    const auto id = rawId ? QString::fromWCharArray(rawId) : QString{};
+    ::CoTaskMemFree(rawId);
+    return id;
+}
+
+QString endpointName(IMMDevice* device) {
+    ComPtr<IPropertyStore> properties;
+    if (FAILED(device->OpenPropertyStore(STGM_READ, properties.GetAddressOf()))) return {};
+    PROPVARIANT value{};
+    QString name;
+    if (SUCCEEDED(properties->GetValue(PKEY_Device_FriendlyName, &value)) && value.vt == VT_LPWSTR)
+        name = QString::fromWCharArray(value.pwszVal);
+    ::PropVariantClear(&value);
+    return name;
+}
+
+bool isActiveMicrophone(const ComPtr<IMMDevice>& device) {
+    DWORD state = 0;
+    ComPtr<IMMEndpoint> endpoint;
+    EDataFlow flow{};
+    return device && SUCCEEDED(device->GetState(&state)) && state == DEVICE_STATE_ACTIVE &&
+           SUCCEEDED(device.As(&endpoint)) && SUCCEEDED(endpoint->GetDataFlow(&flow)) && flow == eCapture;
+}
+
 struct Endpoint {
     QString id;
     ComPtr<IAudioEndpointVolume> volume;
@@ -16,10 +45,7 @@ struct Endpoint {
     AudioLevels lastPublished;
 
     void bind(IMMDevice* device) {
-        LPWSTR rawId = nullptr;
-        if (device) device->GetId(&rawId);
-        const auto nextId = rawId ? QString::fromWCharArray(rawId) : QString{};
-        ::CoTaskMemFree(rawId);
+        const auto nextId = endpointId(device);
         if (nextId != id) {
             volume.Reset();
             meter.Reset();
@@ -63,15 +89,25 @@ struct WindowsAudioLevels::Devices {
         return kind == AudioEndpoint::Microphone ? microphone : speakers;
     }
 
-    Endpoint& refreshDefault(AudioEndpoint kind) {
+    IMMDeviceEnumerator* deviceEnumerator() {
         if (!enumerator)
             ::CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_INPROC_SERVER,
                                IID_PPV_ARGS(enumerator.GetAddressOf()));
+        return enumerator.Get();
+    }
+
+    Endpoint& refresh(AudioEndpoint kind, const QString& microphoneId = {}) {
         ComPtr<IMMDevice> device;
-        if (enumerator) {
-            const auto flow = kind == AudioEndpoint::Microphone ? eCapture : eRender;
-            const HRESULT result = enumerator->GetDefaultAudioEndpoint(flow, eConsole, device.GetAddressOf());
-            if (FAILED(result) && result != HRESULT_FROM_WIN32(ERROR_NOT_FOUND)) enumerator.Reset();
+        if (auto* source = deviceEnumerator()) {
+            HRESULT result;
+            if (kind == AudioEndpoint::Microphone && !microphoneId.isEmpty()) {
+                result = source->GetDevice(reinterpret_cast<LPCWSTR>(microphoneId.utf16()), device.GetAddressOf());
+                if (!isActiveMicrophone(device)) device.Reset();
+            } else {
+                const auto flow = kind == AudioEndpoint::Microphone ? eCapture : eRender;
+                result = source->GetDefaultAudioEndpoint(flow, eConsole, device.GetAddressOf());
+            }
+            if (FAILED(result) && result != E_NOTFOUND) enumerator.Reset();
         }
         auto& selected = endpoint(kind);
         selected.bind(device.Get());
@@ -89,17 +125,63 @@ WindowsAudioLevels::~WindowsAudioLevels() {
     if (initializedCom_) ::CoUninitialize();
 }
 
+bool WindowsAudioLevels::ensureDevices() {
+    if (!devices_) {
+        const HRESULT result = ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        if (FAILED(result) && result != RPC_E_CHANGED_MODE) return false;
+        initializedCom_ = SUCCEEDED(result);
+        devices_ = std::make_unique<Devices>();
+    }
+    return true;
+}
+
+void WindowsAudioLevels::listMicrophones() {
+    QList<MicrophoneDevice> microphones;
+    auto* enumerator = ensureDevices() ? devices_->deviceEnumerator() : nullptr;
+    ComPtr<IMMDeviceCollection> inputs;
+    UINT count = 0;
+    if (enumerator && SUCCEEDED(enumerator->EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE, inputs.GetAddressOf())) &&
+        SUCCEEDED(inputs->GetCount(&count))) {
+        for (UINT index = 0; index < count; ++index) {
+            ComPtr<IMMDevice> device;
+            if (FAILED(inputs->Item(index, device.GetAddressOf()))) continue;
+            const auto id = endpointId(device.Get());
+            if (id.isEmpty()) continue;
+            const auto name = endpointName(device.Get());
+            microphones.append({id, name.isEmpty() ? id : name});
+        }
+    }
+    emit microphonesListed(microphones);
+}
+
+void WindowsAudioLevels::selectMicrophone(const QString& deviceId) {
+    microphoneDeviceId_ = deviceId;
+    if (devices_) {
+        devices_->refresh(AudioEndpoint::Microphone, microphoneDeviceId_);
+        publish(AudioEndpoint::Microphone, true);
+    }
+}
+
+void WindowsAudioLevels::toggleMicrophoneMute() {
+    constexpr auto kind = AudioEndpoint::Microphone;
+    if (ensureDevices()) {
+        // A global shortcut can run while the toolbar's level polling is paused.
+        const AudioLevels current = devices_->refresh(kind, microphoneDeviceId_).read();
+        if (current.muted.has_value()) {
+            setMuted(kind, current.deviceId, !*current.muted);
+            return;
+        }
+        publish(kind, true);
+    }
+    emit writeFailed(kind);
+}
+
 void WindowsAudioLevels::setMonitoring(bool enabled) {
     if (!enabled) {
         timer_->stop();
         return;
     }
-    if (!devices_) {
-        const HRESULT result = ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        if (FAILED(result) && result != RPC_E_CHANGED_MODE) return;
-        initializedCom_ = SUCCEEDED(result);
-        devices_ = std::make_unique<Devices>();
-    }
+    if (!ensureDevices()) return;
     lastDeviceCheck_.invalidate();
     poll();
     timer_->start();
@@ -108,7 +190,7 @@ void WindowsAudioLevels::setMonitoring(bool enabled) {
 void WindowsAudioLevels::poll() {
     const bool checkDefaults = !lastDeviceCheck_.isValid() || lastDeviceCheck_.elapsed() >= 1000;
     for (auto kind : {AudioEndpoint::Microphone, AudioEndpoint::Speakers}) {
-        if (checkDefaults) devices_->refreshDefault(kind);
+        if (checkDefaults) devices_->refresh(kind, microphoneDeviceId_);
         publish(kind);
     }
     if (checkDefaults) lastDeviceCheck_.start();
@@ -126,7 +208,7 @@ void WindowsAudioLevels::publish(AudioEndpoint kind, bool force) {
 void WindowsAudioLevels::setVolume(AudioEndpoint kind, const QString& deviceId, int percent) {
     if (!devices_ || deviceId.isEmpty()) return;
     // A headset can change between displaying the slider and releasing it.
-    auto& endpoint = devices_->refreshDefault(kind);
+    auto& endpoint = devices_->refresh(kind, microphoneDeviceId_);
     if (endpoint.volume && endpoint.id == deviceId &&
         FAILED(endpoint.volume->SetMasterVolumeLevelScalar(qBound(0, percent, 100) / 100.0f, nullptr)))
         emit writeFailed(kind);
@@ -140,7 +222,7 @@ void WindowsAudioLevels::stepSpeakerVolume(bool increase) {
         emit writeFailed(kind);
         return;
     }
-    auto& speakers = devices_->refreshDefault(kind);
+    auto& speakers = devices_->refresh(kind);
     if (!speakers.volume || FAILED(increase ? speakers.volume->VolumeStepUp(nullptr)
                                             : speakers.volume->VolumeStepDown(nullptr)))
         emit writeFailed(kind);
@@ -149,7 +231,7 @@ void WindowsAudioLevels::stepSpeakerVolume(bool increase) {
 
 void WindowsAudioLevels::setMuted(AudioEndpoint kind, const QString& deviceId, bool muted) {
     if (!devices_ || deviceId.isEmpty()) return;
-    auto& endpoint = devices_->refreshDefault(kind);
+    auto& endpoint = devices_->refresh(kind, microphoneDeviceId_);
     const bool applied = endpoint.id == deviceId && endpoint.volume &&
                          SUCCEEDED(endpoint.volume->SetMute(muted ? TRUE : FALSE, nullptr));
     publish(kind, true);

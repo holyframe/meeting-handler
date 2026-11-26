@@ -20,7 +20,8 @@ private:
     void startPing();
     void stopMonitoring();
     void readOutput(bool flushLastLine);
-    void appendUnavailable(const QString& reason);
+    void setWarning(bool warning);
+    void appendUnavailable(const QString& message, const QString& reason);
     void retry(const QString& reason);
 
     QPlainTextEdit* output_;

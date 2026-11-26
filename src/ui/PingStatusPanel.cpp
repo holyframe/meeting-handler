@@ -7,6 +7,7 @@
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QRegularExpression>
+#include <QStyle>
 #include <QTextOption>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -43,6 +44,7 @@ PingStatusPanel::PingStatusPanel(QWidget* parent)
     : QWidget(parent), output_(new QPlainTextEdit(this)), process_(new QProcess(this)),
       retryTimer_(new QTimer(this)) {
     setObjectName("pingStatusPanel");
+    setAttribute(Qt::WA_StyledBackground);
     setAccessibleName(tr("Ping status for google.com"));
     setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     setMaximumHeight(160);
@@ -90,6 +92,7 @@ void PingStatusPanel::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
     if (monitoring_) return;
     monitoring_ = true;
+    setWarning(false);
     output_->clear();
     output_->setToolTip({});
     startPing();
@@ -127,23 +130,35 @@ void PingStatusPanel::readOutput(bool flushLastLine) {
         const QString measurements = replyMeasurements(line);
         if (!measurements.isEmpty()) {
             readingReplies_ = true;
+            setWarning(false);
             output_->appendPlainText(measurements);
             output_->setToolTip({});
         } else if (readingReplies_) {
-            appendUnavailable(line);
+            appendUnavailable(tr("Unreachable"), line);
         }
     };
     while (process_->canReadLine()) appendLine(process_->readLine());
     if (flushLastLine) appendLine(process_->readAllStandardOutput());
 }
 
-void PingStatusPanel::appendUnavailable(const QString& reason) {
-    output_->appendPlainText(output_->placeholderText());
+void PingStatusPanel::setWarning(bool warning) {
+    if (property("warning").toBool() == warning) return;
+    setProperty("warning", warning);
+    for (QWidget* widget : {static_cast<QWidget*>(this), static_cast<QWidget*>(output_)}) {
+        widget->style()->unpolish(widget);
+        widget->style()->polish(widget);
+        widget->update();
+    }
+}
+
+void PingStatusPanel::appendUnavailable(const QString& message, const QString& reason) {
+    setWarning(true);
+    output_->appendPlainText(message);
     output_->setToolTip(reason);
 }
 
 void PingStatusPanel::retry(const QString& reason) {
     if (!monitoring_ || retryTimer_->isActive()) return;
-    appendUnavailable(tr("%1 Retrying in 5 seconds.").arg(reason));
+    appendUnavailable(tr("Ping unavailable"), tr("%1 Retrying in 5 seconds.").arg(reason));
     retryTimer_->start();
 }
