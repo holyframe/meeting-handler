@@ -1,4 +1,5 @@
 #include "AudioLevelControl.h"
+#include "AppTheme.h"
 
 #include <QHBoxLayout>
 #include <QLabel>
@@ -20,13 +21,10 @@ AudioLevelControl::AudioLevelControl(AudioEndpoint endpoint, QWidget* parent)
     auto* row = new QHBoxLayout;
     column->addLayout(row);
     row->setSpacing(4);
-    muteButton_ = new QToolButton(this);
+    muteButton_ = app_theme::toolbarIconButton(this);
     muteButton_->setObjectName(prefix + "Mute");
     muteButton_->setCheckable(true);
     muteButton_->setFocusPolicy(Qt::StrongFocus);
-    muteButton_->setCursor(Qt::PointingHandCursor);
-    muteButton_->setFixedSize(23, 23);
-    muteButton_->setFont(QFont("Segoe MDL2 Assets", 11));
     connect(muteButton_, &QToolButton::toggled, this, [this](bool muted) {
         // Keep the checked state at the last Windows readback.
         const QSignalBlocker guard(muteButton_);

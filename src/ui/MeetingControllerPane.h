@@ -35,7 +35,6 @@ public:
     bool meetingsCollapsed() const { return meetingsCollapsed_; }
     void setLogVisible(bool visible);
     void setMeetingsCollapsed(bool collapsed);
-    void setHeaderPalette(const QPalette& palette);
     void appendLog(const QString& message);
 
 signals:

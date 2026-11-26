@@ -1,0 +1,142 @@
+/* Shared controls */
+QPushButton, QToolButton, QComboBox, QLineEdit {
+    background-color: palette(button);
+    color: palette(button-text);
+    border: 1px solid palette(mid);
+    border-radius: 4px;
+    padding: 2px 4px;
+}
+QPushButton { padding: 2px 8px; }
+QToolButton { padding: 0; }
+QPushButton:enabled:hover, QToolButton:enabled:hover, QComboBox:enabled:hover {
+    background-color: palette(midlight);
+}
+QPushButton:enabled:pressed, QToolButton:enabled:pressed,
+QPushButton:enabled:checked, QToolButton:enabled:checked { background-color: palette(highlight); }
+QPushButton:focus, QToolButton:focus, QComboBox:focus, QLineEdit:focus { border-color: palette(text); }
+QPushButton:disabled, QToolButton:disabled, QComboBox:disabled, QLineEdit:disabled {
+    color: theme(disabled-text);
+    background-color: palette(alternate-base);
+}
+QLabel, QCheckBox { color: palette(window-text); }
+QLabel:disabled, QCheckBox:disabled { color: theme(disabled-text); }
+QDialog { background-color: palette(window); }
+QComboBox QAbstractItemView, QFileDialog QAbstractItemView, QMenu {
+    color: palette(text);
+    background-color: palette(base);
+    selection-background-color: palette(highlight);
+    selection-color: palette(text);
+}
+QSplitter::handle { background: palette(alternate-base); }
+QSplitter::handle:hover { background: palette(mid); }
+
+/* Caption toolbar, targets, and audio controls */
+QWidget#captionSidebar, QWidget#captionToolbar, QWidget#captionFormattingBar, QWidget#captionTargets,
+QWidget#targetViewport, QScrollArea#targetScroll, QFrame#collapseBar { background: palette(alternate-base); }
+QToolButton[toolbarGlyph="true"], QToolButton#jumpToLatest { font-family: "Segoe MDL2 Assets"; }
+QToolButton[toolbarGlyph="true"] { font-size: 11pt; }
+QToolButton#jumpToLatest { border-radius: 16px; font-size: 14px; }
+QToolButton#microphoneMute:enabled:checked, QToolButton#speakerMute:enabled:checked {
+    background-color: #a32434;
+    color: palette(bright-text);
+}
+QToolButton#showPingStatus { border: none; }
+QToolButton#showPingStatus:hover { background: palette(mid); }
+QToolButton#showPingStatus:focus { border: 1px solid palette(text); }
+QFrame#captionTargetTile { background: palette(button); border: 1px solid palette(mid); }
+QFrame#captionTargetTile[active="true"] { border-color: palette(text); }
+QFrame#captionTargetTile[removing="true"] { border-color: theme(picker-outline); }
+QSlider::groove:horizontal { height: 4px; border-radius: 2px; background: palette(mid); }
+QSlider::sub-page:horizontal:enabled { background: palette(link); border-radius: 2px; }
+QSlider::handle:horizontal { width: 12px; margin: -4px 0; border-radius: 6px; background: palette(text); }
+QSlider::handle:horizontal:enabled:hover, QSlider::handle:horizontal:pressed { background: palette(link); }
+QSlider::handle:horizontal:disabled { background: theme(disabled-text); }
+QWidget#captionToolbar QProgressBar { background: palette(button); border: none; border-radius: 2px; }
+QWidget#captionToolbar QProgressBar::chunk { background: #25865f; border-radius: 2px; }
+QPlainTextEdit#pingOutput { background: palette(base); color: palette(text); border: 1px solid palette(mid); }
+
+/* Meetings and activity log */
+QWidget#meetingControllerPane, QWidget#pageRoot, QWidget#meetingsContent,
+QDialog#appLogPanel, QDialog#tabImportDialog {
+    background: palette(base);
+    color: palette(text);
+}
+QFrame#collapseBar { border: none; }
+QPushButton#collapseMeetingsButton {
+    background: transparent; border: 1px solid transparent;
+    font-weight: 600; text-align: left;
+}
+QPushButton#collapseMeetingsButton:enabled:hover { background: palette(midlight); }
+QPushButton#collapseMeetingsButton:focus { border-color: palette(text); }
+QPushButton[meetingHeaderAction="true"] { padding: 0; text-align: center; }
+QLabel#pageSubtitle, QLabel#mutedText { color: palette(placeholder-text); font-size: 9pt; }
+QLabel#sectionTitle { font-size: 13pt; font-weight: 700; }
+QLabel#panelHeading, QLabel#profileHeading { font-weight: 700; }
+QLabel#profileHeading { padding-top: 8px; }
+QFrame#panel, QWidget#tabImportRow {
+    background: palette(button); border: 1px solid palette(mid); border-radius: 8px;
+}
+QFrame#emptyMeetingsCard {
+    background: palette(alternate-base); border: 1px dashed palette(mid); border-radius: 12px;
+}
+QLabel#emptyTitle { font-size: 12pt; font-weight: 700; }
+QLabel#emptyIcon { color: palette(placeholder-text); font-size: 18pt; }
+QFrame#meetingCard, QFrame#meetingCardActive {
+    background: palette(button); border: 1px solid transparent; border-radius: 11px;
+}
+QFrame#meetingCard[hovered="true"], QFrame#meetingCardActive[hovered="true"] {
+    background: palette(midlight); border-color: palette(mid);
+}
+QFrame#meetingCard[dropHover="true"], QFrame#meetingCardActive[dropHover="true"] {
+    border: 2px dashed palette(text);
+}
+QLineEdit#meetingTitle {
+    color: palette(text); background: transparent; border: 1px solid transparent;
+    padding: 1px 2px; font-size: 11pt; font-weight: 700;
+}
+QLineEdit#meetingTitle:hover { border-color: palette(mid); }
+QLineEdit#meetingTitle:focus { background: palette(base); border-color: palette(text); }
+QLabel#meetingIcon {
+    background: palette(midlight); border-radius: 9px; font-size: 15pt; font-weight: 700;
+}
+QWidget#activeBadgeShell { border-radius: 9px; }
+QLabel#activeBadge, QPushButton#activeRefreshButton {
+    color: #052e1a; background: transparent; border: none; font-size: 9pt; font-weight: 700;
+}
+QLabel#activeBadge { padding: 2px 0; }
+QPushButton#activeRefreshButton, QPushButton#cardCloseButton { padding: 0; border-radius: 8px; }
+QPushButton#activeRefreshButton:enabled:hover { background: #15803d; color: palette(bright-text); }
+QPushButton#activeRefreshButton:focus { border: 1px solid palette(text); }
+QPushButton#cardCloseButton { font-size: 14pt; }
+QPushButton#primaryButton, QCheckBox#tabImportCheck { font-weight: 700; }
+QPushButton#dangerButton:enabled, QPushButton#cardCloseButton:enabled:hover { border-color: theme(warning-background); }
+QPushButton#railConnectionButton {
+    background: theme(disabled-text); border: none; padding: 0; border-radius: 5px;
+}
+QWidget#activeBadgeShell, QPushButton#railConnectionButton[connection="ready"] { background: #22c55e; }
+QTableWidget#meetingAudioStatus {
+    background: palette(base); alternate-background-color: palette(alternate-base); color: palette(text);
+    border: 1px solid palette(mid); border-radius: 6px; font-size: 9pt;
+}
+QTableWidget#meetingAudioStatus::item { padding: 1px 6px; }
+QTableWidget#meetingAudioStatus QHeaderView::section {
+    background: palette(button); color: palette(text); border: none;
+    border-bottom: 1px solid palette(mid); padding: 4px 6px; font-weight: 600;
+}
+QTabWidget::pane { background: palette(base); border: 1px solid palette(mid); border-radius: 4px; }
+QTabBar::tab { background: palette(button); color: palette(text); padding: 6px 12px; }
+QTabBar::tab:selected { background: palette(midlight); border-bottom: 2px solid palette(link); }
+QPlainTextEdit#appLog, QPlainTextEdit#diagnosticsText {
+    background: palette(alternate-base); color: palette(text); border: none;
+    selection-background-color: palette(highlight); font-family: Consolas; font-size: 9pt;
+}
+
+/* Warning surfaces keep their contrasting foreground in every theme. */
+QFrame#meetingCard[unmuted="true"], QFrame#meetingCardActive[unmuted="true"],
+QWidget#pingStatusPanel[warning="true"], QWidget#pingStatusPanel[warning="true"] QPlainTextEdit#pingOutput {
+    background: theme(warning-background);
+    border-color: #ee929c;
+}
+QFrame#meetingCard[unmuted="true"] QLineEdit#meetingTitle:!focus,
+QFrame#meetingCardActive[unmuted="true"] QLineEdit#meetingTitle:!focus { color: palette(bright-text); }
+QWidget#pingStatusPanel[warning="true"] QPlainTextEdit#pingOutput { color: #ffe2e5; }

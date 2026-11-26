@@ -1,4 +1,6 @@
 #include "ui/MeetingControllerPane.h"
+#include "ui/AppTheme.h"
+#include "captions/Settings.h"
 #include "ui/MeetingAudioSummary.h"
 #include "windows/ActiveTabPicker.h"
 #include "windows/UiaWorker.h"
@@ -115,6 +117,7 @@ private slots:
         QVERIFY(QFontDatabase::addApplicationFont(fonts + "segoeuib.ttf") >= 0);
         QVERIFY(QFontDatabase::addApplicationFont(fonts + "seguisb.ttf") >= 0);
         QFontDatabase::addApplicationFont(fonts + "seguisym.ttf");
+        app_theme::apply(UiTheme::Dark);
     }
 
     void recognizesAudioControls_data()
@@ -811,7 +814,7 @@ private slots:
         window.refreshMeetingCards();
         window.show();
         QCoreApplication::processEvents();
-        const QColor unmutedRed("#861E2B");
+        const QColor unmutedRed = app_theme::warningBackground;
         const auto verifyHighlight = [&](int row, bool expected) {
             auto* card = window.meetingCards_.at(row);
             QCOMPARE(card->grab(QRect(card->width() / 2, 5, 1, 1)).toImage().pixelColor(0, 0) == unmutedRed, expected);
@@ -1066,23 +1069,36 @@ private slots:
     {
         QTest::addColumn<bool>("enabled");
         QTest::addColumn<bool>("pressed");
-        QTest::newRow("normal") << true << false;
-        QTest::newRow("pressed") << true << true;
-        QTest::newRow("disabled") << false << false;
+        QTest::addColumn<bool>("light");
+        QTest::newRow("normal") << true << false << false;
+        QTest::newRow("pressed") << true << true << false;
+        QTest::newRow("disabled") << false << false << false;
+        QTest::newRow("light") << true << false << true;
     }
 
     void importButtonCentersItsPlus()
     {
         QFETCH(bool, enabled);
         QFETCH(bool, pressed);
+        QFETCH(bool, light);
         MeetingControllerPane window;
         window.show();
+        app_theme::apply(light ? UiTheme::Light : UiTheme::Dark);
         auto* button = window.dashboardPickUpButton_;
         button->setEnabled(enabled);
         button->setDown(pressed);
         QCOMPARE(button->size(), QSize(24, 24));
+        QCOMPARE(button->cursor().shape(), enabled ? Qt::PointingHandCursor : Qt::ArrowCursor);
 
         const QImage rendered = button->grab().toImage();
+        for (qreal scale : {1.0, 2.0}) {
+            const auto mode = enabled ? QIcon::Normal : QIcon::Disabled;
+            const auto icon = button->icon().pixmap(button->iconSize(), scale, mode).toImage();
+            QCOMPARE(icon.size(), button->iconSize() * scale);
+            QCOMPARE(icon.pixelColor(0, 0).alpha(), 0);
+            QCOMPARE(icon.pixelColor(icon.rect().center()),
+                     qApp->palette().color(enabled ? QPalette::Active : QPalette::Disabled, QPalette::ButtonText));
+        }
         button->setIcon(QIcon());
         const QImage background = button->grab().toImage();
         QRect plus;
@@ -1097,6 +1113,7 @@ private slots:
         const int tolerance = qCeil(rendered.devicePixelRatio());
         QVERIFY(qAbs(offset.x()) <= tolerance);
         QVERIFY(qAbs(offset.y()) <= tolerance);
+        app_theme::apply(UiTheme::Dark);
     }
 
     void meetingGridFollowsItsViewport()
@@ -1205,6 +1222,8 @@ private slots:
         window.show();
         QTest::qWait(100);
         auto* activeCard = window.meetingCards_.at(0);
+        for (auto* button : activeCard->findChildren<QPushButton*>())
+            QCOMPARE(button->cursor().shape(), button->isEnabled() ? Qt::PointingHandCursor : Qt::ArrowCursor);
         auto* refresh = activeCard->findChild<QPushButton*>("activeRefreshButton");
         auto* activeLabel = activeCard->findChild<QLabel*>("activeBadge");
         QVERIFY(refresh->mapTo(activeCard, QPoint()).x() < activeLabel->mapTo(activeCard, QPoint()).x());

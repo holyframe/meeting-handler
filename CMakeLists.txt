@@ -21,7 +21,7 @@ add_library(meeting_handler_core STATIC
     src/ui/MeetingHandlerWindow.cpp
     src/ui/PingStatusPanel.cpp
     src/ui/CaptionPane.cpp
-    src/ui/CaptionTheme.cpp
+    src/ui/AppTheme.cpp
     src/ui/CaptionTargetList.cpp
     src/ui/CaptionView.cpp
     src/ui/MeetingAudioSummary.cpp
@@ -62,8 +62,7 @@ qt_add_resources(meeting_handler_core application_assets
         resources/icons/import-meeting-tabs.svg
         resources/icons/microphone-off.svg
         resources/icons/speaker-off.svg
-        resources/controller.qss
-        resources/captions.qss
+        resources/application.qss
 )
 
 # The shared-window test uses the packaged app's Windows DPI manifest.

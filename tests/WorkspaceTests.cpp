@@ -2,7 +2,7 @@
 #include "ui/MeetingControllerPane.h"
 #include "ui/AudioLevelControl.h"
 #include "ui/CaptionPane.h"
-#include "ui/CaptionTheme.h"
+#include "ui/AppTheme.h"
 #include "ui/CaptionView.h"
 #include "ui/PingStatusPanel.h"
 #include "ui/SettingsDialog.h"
@@ -166,7 +166,10 @@ void verifyColumnsFit(QWidget* workspace) {
     const auto captionColor = background(formatting);
     QCOMPARE(captionColor, captions->palette().color(QPalette::AlternateBase));
     QCOMPARE(background(sidebar), captionColor);
-    if (!controller->meetingsCollapsed()) QCOMPARE(background(meetingHeader), captionColor);
+    if (!controller->meetingsCollapsed()) {
+        QCOMPARE(background(meetingHeader), captionColor);
+        QCOMPARE(background(controller->findChild<QWidget*>("pageRoot")), captions->palette().base().color());
+    }
     QCOMPARE(formatting->width(), captions->width());
     QCOMPARE(boundsIn(view, captions).topLeft(), QPoint(0, formatting->height()));
     QCOMPARE(boundsIn(view, captions).right(), captions->rect().right());
@@ -400,13 +403,15 @@ private slots:
         QFETCH(QString, muteAction);
         QFETCH(QString, unmuteAction);
         AudioLevelControl control(endpoint, nullptr);
-        caption_theme::apply(&control, UiTheme::Dark);
+        app_theme::apply(UiTheme::Dark);
         auto* button = control.findChild<QToolButton*>(buttonName);
         auto* slider = control.findChild<QSlider*>();
         QVERIFY(button && slider);
         QSignalSpy requests(&control, &AudioLevelControl::muteRequested);
         QSignalSpy volumeWrites(&control, &AudioLevelControl::volumeRequested);
         QVERIFY(button->isCheckable() && !button->isEnabled());
+        QCOMPARE(button->cursor().shape(), Qt::ArrowCursor);
+        QCOMPARE(slider->cursor().shape(), Qt::ArrowCursor);
         QCOMPARE(button->focusPolicy(), Qt::StrongFocus);
         const auto other = endpoint == AudioEndpoint::Microphone ? AudioEndpoint::Speakers : AudioEndpoint::Microphone;
         control.setLevels(other, {"other", 90, 0, true});
@@ -415,6 +420,8 @@ private slots:
         control.setLevels(endpoint, {"device A", 55, 10, false});
         control.show();
         QVERIFY(button->isEnabled() && !button->isChecked());
+        QCOMPARE(button->cursor().shape(), Qt::PointingHandCursor);
+        QCOMPARE(slider->cursor().shape(), Qt::PointingHandCursor);
         const auto buttonFill = [button] { return button->grab(QRect(3, 3, 1, 1)).toImage().pixelColor(0, 0); };
         QCOMPARE(buttonFill(), control.palette().button().color());
         const QString onGlyph = button->text();
@@ -433,7 +440,7 @@ private slots:
         control.setLevels(endpoint, {"device A", 55, 0, true});
         QVERIFY(button->isChecked());
         QCOMPARE(buttonFill(), QColor("#a32434"));
-        caption_theme::apply(&control, UiTheme::Light);
+        app_theme::apply(UiTheme::Light);
         QCOMPARE(buttonFill(), QColor("#a32434"));
         QVERIFY(button->text() != onGlyph && button->fontMetrics().inFont(button->text().front()));
         QCOMPARE(button->accessibleName(), unmuteAction);
@@ -461,6 +468,8 @@ private slots:
         QVERIFY(requests.isEmpty());
         control.setLevels(endpoint, {"device B", 32, 0, std::nullopt});
         QVERIFY(!button->isEnabled() && slider->isEnabled());
+        QCOMPARE(button->cursor().shape(), Qt::ArrowCursor);
+        QCOMPARE(slider->cursor().shape(), Qt::PointingHandCursor);
         button->click();
         QVERIFY(requests.isEmpty() && volumeWrites.isEmpty());
         QTest::keyClick(slider, Qt::Key_Right);
@@ -835,15 +844,21 @@ private slots:
                 fieldsFound = source && theme && hotkey && arrows && arrows->isChecked() && microphone && mute &&
                               microphone->currentText() == "Windows default" && mute->text() == "None";
                 if (fieldsFound) {
+                    for (auto* button : dialog->findChildren<QAbstractButton*>())
+                        fieldsFound = fieldsFound && button->cursor().shape() ==
+                            (button->isEnabled() ? Qt::PointingHandCursor : Qt::ArrowCursor);
+                    const auto appBackground = qApp->palette().window().color();
                     source->setCurrentIndex(1);
                     theme->setCurrentIndex(1);
+                    fieldsFound = fieldsFound && dialog->palette().window().color() == Qt::white &&
+                                  qApp->palette().window().color() == appBackground;
                     arrows->setChecked(false);
                     QTest::keyClick(hotkey, Qt::Key_F8, Qt::ControlModifier | Qt::AltModifier);
                     QTest::keyClick(mute, Qt::Key_F9, Qt::ControlModifier | Qt::ShiftModifier);
                     emit audio.microphonesListed({{"usb-a", "USB headset"}, {"usb-b", "USB headset"}});
                     microphone->setCurrentIndex(2);
                     emit audio.microphonesListed({{"usb-a", "USB headset"}});
-                    fieldsFound = microphone->currentText() == "USB headset (unavailable)";
+                    fieldsFound = fieldsFound && microphone->currentText() == "USB headset (unavailable)";
                     emit audio.microphonesListed({{"usb-b", "Desk headset"}, {"usb-a", "USB headset"}});
                     fieldsFound = fieldsFound && microphone->currentText() == "Desk headset";
                 }
@@ -986,7 +1001,8 @@ private slots:
             auto* columns = workspace->findChild<QSplitter*>("workspaceColumns");
             QCOMPARE(columns->sizes().first(), settings.sidePanelWidth);
             auto* controller = workspace->findChild<MeetingControllerPane*>();
-            QVERIFY(controller && !controller->isWindow() && !controller->styleSheet().isEmpty());
+            QVERIFY(controller && !controller->isWindow() && controller->styleSheet().isEmpty());
+            QVERIFY(!qApp->styleSheet().isEmpty());
             auto* log = window.findChild<QPlainTextEdit*>("appLog");
             auto* logPanel = window.findChild<QDialog*>("appLogPanel");
             QVERIFY(log && logPanel && !logPanel->isVisible());

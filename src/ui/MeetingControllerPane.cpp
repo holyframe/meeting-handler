@@ -1,5 +1,5 @@
 #include "MeetingControllerPane.h"
-#include "CaptionTheme.h"
+#include "AppTheme.h"
 #include "MeetingAudioSummary.h"
 #include "windows/UiaWorker.h"
 
@@ -79,13 +79,12 @@ MeetingControllerPane::MeetingControllerPane(QWidget* parent)
 
     collapseBar_ = new QFrame(this);
     collapseBar_->setObjectName("collapseBar");
-    collapseBar_->setFixedHeight(caption_theme::paneHeaderHeight);
+    collapseBar_->setFixedHeight(app_theme::paneHeaderHeight);
     auto* barLayout = new QHBoxLayout(collapseBar_);
     barLayout->setContentsMargins(8, 0, 8, 0);
     barLayout->setSpacing(6);
     collapseButton_ = new QPushButton(collapseBar_);
     collapseButton_->setObjectName("collapseMeetingsButton");
-    collapseButton_->setCursor(Qt::PointingHandCursor);
     collapseButton_->setAccessibleName("Collapse meetings");
     collapseButton_->setToolTip("Hide the meeting controls");
     collapseButton_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -97,10 +96,9 @@ MeetingControllerPane::MeetingControllerPane(QWidget* parent)
         auto* button = new QPushButton(collapseBar_);
         button->setObjectName(objectName);
         button->setProperty("meetingHeaderAction", true);
-        button->setIcon(QIcon(iconPath));
+        button->setIcon(app_theme::buttonIcon(iconPath));
         button->setIconSize(QSize(16, 16));
         button->setAccessibleName(name);
-        button->setCursor(Qt::PointingHandCursor);
         button->setFocusPolicy(Qt::StrongFocus);
         button->setFixedSize(24, 24);
         barLayout->addWidget(button, 0, Qt::AlignVCenter);
@@ -118,7 +116,6 @@ MeetingControllerPane::MeetingControllerPane(QWidget* parent)
 
     uiaRefreshButton_ = new QPushButton(collapseBar_);
     uiaRefreshButton_->setObjectName("railConnectionButton");
-    uiaRefreshButton_->setCursor(Qt::PointingHandCursor);
     uiaRefreshButton_->setFocusPolicy(Qt::StrongFocus);
     uiaRefreshButton_->setAccessibleName("Connection status");
     uiaRefreshButton_->setProperty("connection", "idle");
@@ -229,7 +226,6 @@ MeetingControllerPane::MeetingControllerPane(QWidget* parent)
     connect(workerThread_, &QThread::finished,
             worker_, &QObject::deleteLater);
 
-    setHeaderPalette(palette());
     setStatusMessage(
         "Ready · Pick up meeting tabs to read microphone and sound states");
     workerThread_->start();
@@ -936,7 +932,6 @@ QFrame* MeetingControllerPane::createMeetingCard(const ManagedMeeting& meeting)
         auto* refreshButton = new QPushButton(QStringLiteral("⟳"), badge);
         refreshButton->setObjectName("activeRefreshButton");
         refreshButton->setFixedSize(18, 18);
-        refreshButton->setCursor(Qt::PointingHandCursor);
         refreshButton->setToolTip("Read the microphone and sound states from Zoom again.");
         refreshButton->setAccessibleName("Refresh meeting");
         refreshButton->setEnabled(!meetingBusy_);
@@ -955,7 +950,6 @@ QFrame* MeetingControllerPane::createMeetingCard(const ManagedMeeting& meeting)
     auto* closeButton = new QPushButton(QStringLiteral("×"), card);
     closeButton->setObjectName("cardCloseButton");
     closeButton->setFixedSize(28, 28);
-    closeButton->setCursor(Qt::PointingHandCursor);
     closeButton->setToolTip("Remove this meeting from the list. Zoom is not changed.");
     closeButton->setAccessibleName("Remove meeting");
     closeButton->setEnabled(!meetingBusy_);
@@ -1724,9 +1718,4 @@ void MeetingControllerPane::appendLog(const QString& message)
     const QString timestamp =
         QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
     liveDiagnostics_->appendPlainText(QString("[%1] %2").arg(timestamp, message));
-}
-
-void MeetingControllerPane::setHeaderPalette(const QPalette& palette)
-{
-    setStyleSheet(caption_theme::styleSheet(QStringLiteral(":/controller.qss"), palette));
 }

@@ -1,6 +1,6 @@
 #include "MeetingHandlerWindow.h"
 #include "CaptionPane.h"
-#include "CaptionTheme.h"
+#include "AppTheme.h"
 #include "MeetingControllerPane.h"
 
 #include <QApplication>
@@ -15,7 +15,7 @@
 
 namespace {
 constexpr int collapsedDividerWidth = 9;
-constexpr int dividerSpaceFreedOnCollapse = 2 * caption_theme::splitterThickness - collapsedDividerWidth;
+constexpr int dividerSpaceFreedOnCollapse = 2 * app_theme::splitterThickness - collapsedDividerWidth;
 
 class ExpandMeetingsButton final : public QToolButton {
 public:
@@ -23,7 +23,6 @@ public:
         setObjectName("expandMeetingsButton");
         setAccessibleName(tr("Expand meetings"));
         setToolTip(tr("Expand meetings"));
-        setCursor(Qt::PointingHandCursor);
         setFocusPolicy(Qt::StrongFocus);
         setAttribute(Qt::WA_Hover);
         setFixedSize(collapsedDividerWidth, 72);
@@ -60,7 +59,7 @@ MeetingHandlerWindow::MeetingHandlerWindow(const Settings& captionSettings, QSet
     columns_ = new QSplitter(Qt::Horizontal, workspace);
     columns_->setObjectName("workspaceColumns");
     columns_->setChildrenCollapsible(false);
-    columns_->setHandleWidth(caption_theme::splitterThickness);
+    columns_->setHandleWidth(app_theme::splitterThickness);
     auto* sidebar = new QWidget;
     sidebar->setObjectName("captionSidebar");
     sidebar->setMinimumWidth(56);
@@ -78,14 +77,13 @@ MeetingHandlerWindow::MeetingHandlerWindow(const Settings& captionSettings, QSet
     expand->hide();
     divider->setBackgroundRole(QPalette::AlternateBase);
     divider->setAutoFillBackground(true);
-    connect(captions, &CaptionPane::headerPaletteChanged, divider, &QWidget::setPalette);
     connect(expand, &QToolButton::clicked, controller_, [this] {
         controller_->setMeetingsCollapsed(false);
         controller_->setFocus(Qt::OtherFocusReason);
     });
     connect(controller_, &MeetingControllerPane::meetingsCollapsedChanged, this, [this, expand](bool collapsed) {
         expand->setVisible(collapsed);
-        columns_->setHandleWidth(collapsed ? collapsedDividerWidth : caption_theme::splitterThickness);
+        columns_->setHandleWidth(collapsed ? collapsedDividerWidth : app_theme::splitterThickness);
         if (collapsed && expand->isVisible()) expand->setFocus(Qt::OtherFocusReason);
     });
     columns_->setStretchFactor(0, 0);
@@ -111,7 +109,6 @@ MeetingHandlerWindow::MeetingHandlerWindow(const Settings& captionSettings, QSet
     });
     connect(controller_, &MeetingControllerPane::meetingsCollapsedChanged, this, &MeetingHandlerWindow::applyMeetingsToggle);
     connect(captions, &CaptionPane::logLine, controller_, &MeetingControllerPane::appendLog);
-    connect(captions, &CaptionPane::headerPaletteChanged, controller_, &MeetingControllerPane::setHeaderPalette);
     connect(captions, &CaptionPane::logToggled, controller_, &MeetingControllerPane::setLogVisible);
     connect(controller_, &MeetingControllerPane::logVisibilityChanged, captions,
             &CaptionPane::setLogVisible);

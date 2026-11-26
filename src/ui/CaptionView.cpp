@@ -37,12 +37,10 @@ CaptionView::CaptionView(QWidget* parent)
     viewport()->setAutoFillBackground(false);
     m_jumpButton->setObjectName("jumpToLatest");
     m_jumpButton->setAutoRaise(true);
-    m_jumpButton->setFont(QFont("Segoe MDL2 Assets", 14));
     m_jumpButton->setText(QChar(0xE70D));
     m_jumpButton->setAccessibleName(tr("Jump to latest caption"));
     m_jumpButton->setToolTip(m_jumpButton->accessibleName());
     m_jumpButton->setFixedSize(32, 32);
-    m_jumpButton->setCursor(Qt::PointingHandCursor);
     m_jumpButton->hide();
     connect(m_jumpButton, &QToolButton::clicked, this, [this] {
         m_forceFollow = true;

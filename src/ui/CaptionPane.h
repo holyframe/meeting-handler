@@ -49,7 +49,6 @@ signals:
     void microphoneDeviceSelected(const QString& deviceId);
     void microphoneMuteToggleRequested();
     void speakerVolumeStepRequested(bool increase);
-    void headerPaletteChanged(const QPalette& palette);
 
 protected:
     bool event(QEvent* event) override;

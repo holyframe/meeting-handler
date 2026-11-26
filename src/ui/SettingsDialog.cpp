@@ -1,5 +1,5 @@
 #include "SettingsDialog.h"
-#include "CaptionTheme.h"
+#include "AppTheme.h"
 #include "windows/WindowsAudioLevels.h"
 
 #include <windows.h>
@@ -152,7 +152,7 @@ bool ShowSettingsDialog(QWidget* owner, Settings& settings, WindowsAudioLevels& 
     theme->addItems({QObject::tr("Dark"), QObject::tr("Light"), QObject::tr("System")});
     theme->setCurrentIndex(static_cast<int>(settings.theme));
     form->addRow(QObject::tr("Theme"), theme);
-    const auto applyTheme = [&] { caption_theme::apply(&dialog, static_cast<UiTheme>(theme->currentIndex())); };
+    const auto applyTheme = [&] { app_theme::apply(static_cast<UiTheme>(theme->currentIndex()), &dialog); };
     QObject::connect(theme, &QComboBox::currentIndexChanged, &dialog, applyTheme);
     QObject::connect(qGuiApp->styleHints(), &QStyleHints::colorSchemeChanged, &dialog, applyTheme);
     applyTheme();
@@ -223,7 +223,7 @@ bool ShowSettingsDialog(QWidget* owner, Settings& settings, WindowsAudioLevels& 
         chooser.setOption(QFileDialog::ShowDirsOnly);
         chooser.setWindowTitle(QObject::tr("Choose caption save folder"));
         chooser.setDirectory(folder->text());
-        caption_theme::apply(&chooser, static_cast<UiTheme>(theme->currentIndex()));
+        app_theme::apply(static_cast<UiTheme>(theme->currentIndex()), &chooser);
         if (chooser.exec() == QDialog::Accepted && !chooser.selectedFiles().isEmpty())
             folder->setText(chooser.selectedFiles().first());
     });

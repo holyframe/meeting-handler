@@ -1,4 +1,5 @@
 #include "WindowPickOutline.h"
+#include "AppTheme.h"
 
 #include <dwmapi.h>
 #include <QPalette>
@@ -21,7 +22,7 @@ WindowPickOutline::WindowPickOutline(QWidget* owner)
     setAttribute(Qt::WA_ShowWithoutActivating);
     setAttribute(Qt::WA_TransparentForMouseEvents);
     QPalette colors = palette();
-    colors.setColor(QPalette::Window, Qt::red);
+    colors.setColor(QPalette::Window, app_theme::pickerOutline);
     setPalette(colors);
     setAutoFillBackground(true);
 }

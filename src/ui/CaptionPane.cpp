@@ -1,7 +1,7 @@
 #include "CaptionPane.h"
 #include "AudioLevelControl.h"
 #include "CaptionTargetList.h"
-#include "CaptionTheme.h"
+#include "AppTheme.h"
 #include "CaptionView.h"
 #include "PingStatusPanel.h"
 #include "SettingsDialog.h"
@@ -47,9 +47,8 @@ public:
     explicit PingDividerButton(QWidget* parent) : QToolButton(parent) {
         setObjectName("showPingStatus");
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        setFixedHeight(caption_theme::splitterThickness);
+        setFixedHeight(app_theme::splitterThickness);
         setFocusPolicy(Qt::StrongFocus);
-        setCursor(Qt::PointingHandCursor);
         setCheckable(true);
     }
 
@@ -73,13 +72,11 @@ CaptionSourceChoice ToSourceChoice(CaptionSourcePreference source) {
 }
 
 QToolButton* iconButton(QWidget* parent, const char* name, const QString& label, ushort glyph) {
-    auto* button = new QToolButton(parent);
+    auto* button = app_theme::toolbarIconButton(parent);
     button->setObjectName(name);
     button->setAccessibleName(label);
     button->setToolTip(label);
-    button->setFont(QFont("Segoe MDL2 Assets", 11));
     button->setText(QChar(glyph));
-    button->setFixedSize(23, 23);
     return button;
 }
 
@@ -152,9 +149,8 @@ void CaptionPane::createControls() {
     sideLayout->setContentsMargins(0, 0, 0, 0);
     sideLayout->setSpacing(0);
     auto* pickerRow = new QHBoxLayout;
-    pickerRow->addStrut(caption_theme::paneHeaderHeight);
+    pickerRow->addStrut(app_theme::paneHeaderHeight);
     m_pickButton = iconButton(sidebar, "pickCaptionTarget", tr("Pick up window"), 0xE78B);
-    m_pickButton->setFixedSize(caption_theme::headerControlHeight, caption_theme::headerControlHeight);
     m_pickButton->installEventFilter(this);
     pickerRow->addWidget(m_pickButton, 0, Qt::AlignCenter);
     sideLayout->addLayout(pickerRow);
@@ -184,7 +180,7 @@ void CaptionPane::createControls() {
     m_rows = new QSplitter(Qt::Vertical, this);
     m_rows->setObjectName("captionRows");
     m_rows->setChildrenCollapsible(false);
-    m_rows->setHandleWidth(caption_theme::splitterThickness);
+    m_rows->setHandleWidth(app_theme::splitterThickness);
     layout->addWidget(m_rows, 1);
     m_view = new CaptionView;
     m_view->setMinimumHeight(80);
@@ -263,9 +259,9 @@ void CaptionPane::createControls() {
 QWidget* CaptionPane::createFormattingBar() {
     auto* bar = new QWidget(this);
     bar->setObjectName("captionFormattingBar");
-    bar->setFixedHeight(caption_theme::paneHeaderHeight);
+    bar->setFixedHeight(app_theme::paneHeaderHeight);
     auto* row = new QHBoxLayout(bar);
-    row->setContentsMargins(8, caption_theme::headerVerticalMargin, 8, caption_theme::headerVerticalMargin);
+    row->setContentsMargins(8, app_theme::headerVerticalMargin, 8, app_theme::headerVerticalMargin);
     row->setSpacing(6);
     const auto combo = [&](const char* name, const QString& label, const QString& accessibleName) {
         auto* title = new QLabel(label, bar);
@@ -273,7 +269,7 @@ QWidget* CaptionPane::createFormattingBar() {
         box->setObjectName(name);
         box->setAccessibleName(accessibleName);
         box->setToolTip(accessibleName);
-        box->setFixedHeight(caption_theme::headerControlHeight);
+        box->setFixedHeight(app_theme::headerControlHeight);
         title->setBuddy(box);
         row->addWidget(title);
         row->addWidget(box);
@@ -396,11 +392,7 @@ void CaptionPane::restoreToolbarHeight() {
 }
 
 void CaptionPane::ApplyTheme() {
-    caption_theme::apply(this, m_settings.theme);
-    m_view->setPalette(palette());
-    m_targetSidebar->setStyleSheet(styleSheet());
-    m_targetSidebar->setPalette(palette());
-    emit headerPaletteChanged(palette());
+    app_theme::apply(m_settings.theme);
 }
 
 void CaptionPane::ApplyTypography() {
@@ -587,7 +579,6 @@ void CaptionPane::OnSave() {
     ::GetLocalTime(&now);
     QFileDialog dialog(this);
     dialog.setOption(QFileDialog::DontUseNativeDialog);
-    caption_theme::apply(&dialog, m_settings.theme);
     dialog.setWindowTitle(tr("Save captions"));
     dialog.setAcceptMode(QFileDialog::AcceptSave);
     dialog.setDirectory(folder);
