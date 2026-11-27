@@ -64,10 +64,10 @@ MeetingHandlerWindow::MeetingHandlerWindow(const Settings& captionSettings, QSet
     sidebar->setObjectName("captionSidebar");
     sidebar->setMinimumWidth(56);
     columns_->addWidget(sidebar);
-    controller_ = new MeetingControllerPane(columns_);
-    columns_->addWidget(controller_);
     auto* captions = new CaptionPane(sidebar, columns_);
     columns_->addWidget(captions);
+    controller_ = new MeetingControllerPane(columns_, &captions->windowManager());
+    columns_->insertWidget(1, controller_);
     // Qt keeps this handle between the sidebar and transcript when Meetings is hidden.
     auto* divider = columns_->handle(2);
     auto* gripLayout = new QVBoxLayout(divider);

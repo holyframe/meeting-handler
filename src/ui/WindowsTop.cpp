@@ -99,6 +99,16 @@ HWND WindowsTop::hoveredWindow() const {
     return ::GetAncestor(m_desktop.underPointer(), GA_ROOT);
 }
 
+bool WindowsTop::isPinned(HWND window) const {
+    const auto it = m_windows.find(window);
+    return it != m_windows.end() && it->second->pin && owns(window);
+}
+
+QString WindowsTop::setPinned(HWND window, bool pinned) {
+    if (pinned == isPinned(window)) return {};
+    return toggle(WindowAction::Pin, window);
+}
+
 void WindowsTop::configure(const WindowsTopSettings& settings) {
     m_settings = settings;
     for (auto& [hwnd, state] : m_windows) {
@@ -195,6 +205,8 @@ QString WindowsTop::toggle(WindowAction action, HWND candidate) {
     }
     forgetUnused();
     if (!m_windows.empty() && !m_timer.isActive()) m_timer.start();
+    if (ok && action == WindowAction::Pin)
+        emit pinChanged(reinterpret_cast<quintptr>(hwnd), isPinned(hwnd));
     return ok ? QString() : QObject::tr("%1 is unavailable for this window.").arg(actionName(action));
 }
 
@@ -214,6 +226,7 @@ void WindowsTop::forgetUnused() {
         auto& state = *it->second;
         if (state.preview && !state.preview->isVisible()) state.preview.reset();
         const bool valid = owns(it->first);
+        if (!valid && state.pin) emit pinChanged(reinterpret_cast<quintptr>(it->first), false);
         if (valid && (state.pin || state.opacity || state.preview)) { ++it; continue; }
         if (valid) ::RemovePropW(it->first, m_property.c_str());
         it = m_windows.erase(it);

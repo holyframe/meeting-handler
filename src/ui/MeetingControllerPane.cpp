@@ -1,4 +1,5 @@
 #include "MeetingControllerPane.h"
+#include "WindowsTop.h"
 #include "AppTheme.h"
 #include "MeetingAudioSummary.h"
 #include "windows/UiaWorker.h"
@@ -19,7 +20,6 @@
 #include <QIcon>
 #include <QJsonDocument>
 #include <QLabel>
-#include <QLineEdit>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPlainTextEdit>
@@ -66,8 +66,8 @@ QLabel* hiddenLabel(const QString& text, const QString& objectName, QWidget* par
 
 }
 
-MeetingControllerPane::MeetingControllerPane(QWidget* parent)
-    : QWidget(parent)
+MeetingControllerPane::MeetingControllerPane(QWidget* parent, WindowsTop* windowsTop)
+    : QWidget(parent), windowsTop_(windowsTop)
 {
     setObjectName("meetingControllerPane");
     setAttribute(Qt::WA_StyledBackground);
@@ -888,64 +888,40 @@ QFrame* MeetingControllerPane::createMeetingCard(const ManagedMeeting& meeting)
     iconTile->setAlignment(Qt::AlignCenter);
     iconTile->setFixedSize(38, 38);
 
-    auto* title = new QLineEdit(meeting.displayTitle(), card);
-    title->setCursorPosition(0);
+    auto* title = new QLabel(meeting.displayTitle(), card);
     title->setObjectName("meetingTitle");
-    title->setMinimumWidth(0);
-    title->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-    title->setFrame(false);
-    title->setPlaceholderText("Meeting name");
-    title->setToolTip("Name shown on this card. The Chrome tab title is not changed.");
-    title->setClearButtonEnabled(false);
-    connect(title, &QLineEdit::editingFinished, this, [this, key, title]
-    {
-        if (ManagedMeeting* current = findMeeting(key))
-        {
-            QString name = title->text().trimmed();
-            if (name.isEmpty())
-            {
-                name = current->chromeTabName.isEmpty()
-                    ? QStringLiteral("Zoom meeting") : current->chromeTabName;
-                title->setText(name);
-            }
-            if (current->title != name)
-            {
-                current->title = name;
-                audioSummary_->setMeetings(meetings_);
-                appendLog(QString("Renamed a meeting card to \"%1\".").arg(name));
-            }
-        }
-    });
-
+    title->setTextFormat(Qt::PlainText);
+    title->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    title->setToolTip(meeting.displayTitle());
     headerRow->addWidget(iconTile, 0, Qt::AlignVCenter);
     headerRow->addWidget(title, 1, Qt::AlignVCenter);
     iconTile->setAttribute(Qt::WA_TransparentForMouseEvents);
 
-    if (isActive)
-    {
-        auto* badge = new QWidget(card);
-        badge->setObjectName("activeBadgeShell");
-        auto* badgeLayout = new QHBoxLayout(badge);
-        badgeLayout->setContentsMargins(3, 1, 8, 1);
-        badgeLayout->setSpacing(2);
-
-        auto* refreshButton = new QPushButton(QStringLiteral("⟳"), badge);
-        refreshButton->setObjectName("activeRefreshButton");
-        refreshButton->setFixedSize(18, 18);
-        refreshButton->setToolTip("Read the microphone and sound states from Zoom again.");
-        refreshButton->setAccessibleName("Refresh meeting");
-        refreshButton->setEnabled(!meetingBusy_);
-        connect(refreshButton, &QPushButton::clicked,
-                this, [this, key] { readSound(key); });
-
-        auto* badgeText = new QLabel("Active", badge);
-        badgeText->setObjectName("activeBadge");
-        badgeText->setAttribute(Qt::WA_TransparentForMouseEvents);
-
-        badgeLayout->addWidget(refreshButton);
-        badgeLayout->addWidget(badgeText);
-        headerRow->addWidget(badge, 0, Qt::AlignVCenter);
+    auto* pin = new QCheckBox(tr("On top"), card);
+    pin->setObjectName("pinMeetingWindow");
+    pin->setAccessibleName(tr("Always on top for %1").arg(meeting.displayTitle()));
+    pin->setToolTip(tr("Select this tab and keep its Chrome window above other apps."));
+    const auto handle = meeting.handle();
+    const auto hwnd = reinterpret_cast<HWND>(handle);
+    pin->setEnabled(windowsTop_ && !meetingBusy_);
+    if (windowsTop_) {
+        pin->setChecked(windowsTop_->isPinned(hwnd));
+        connect(windowsTop_, &WindowsTop::pinChanged, pin, [pin, handle](quintptr changed, bool checked) {
+            if (changed == handle) pin->setChecked(checked);
+        });
+        connect(pin, &QCheckBox::clicked, this, [this, pin, key, hwnd](bool checked) {
+            pin->setChecked(windowsTop_->isPinned(hwnd));
+            if (meetingBusy_) return;
+            if (checked) {
+                pendingPinKey_ = key;
+                activateMeeting(key);
+            } else {
+                const QString error = windowsTop_->setPinned(hwnd, false);
+                if (!error.isEmpty()) QMessageBox::warning(this, tr("Always on Top"), error);
+            }
+        });
     }
+    headerRow->addWidget(pin, 0, Qt::AlignVCenter);
 
     auto* closeButton = new QPushButton(QStringLiteral("×"), card);
     closeButton->setObjectName("cardCloseButton");
@@ -1282,16 +1258,15 @@ bool MeetingControllerPane::eventFilter(QObject* watched, QEvent* event)
         return QWidget::eventFilter(watched, event);
     }
 
-    if (!mouse || qobject_cast<QPushButton*>(widget))
+    if (!mouse || qobject_cast<QAbstractButton*>(widget))
         return QWidget::eventFilter(watched, event);
 
     const QString key = card->property("meetingKey").toString();
-    const bool onTitle = widget->objectName() == "meetingTitle";
     if (event->type() == QEvent::MouseButtonDblClick && mouse->button() == Qt::LeftButton)
     {
-        if (!onTitle && !meetingBusy_ && !dragMoved_)
+        if (!meetingBusy_ && !dragMoved_)
             activateMeeting(key);
-        return onTitle ? QWidget::eventFilter(watched, event) : true;
+        return true;
     }
 
     if (meetingBusy_)
@@ -1299,13 +1274,10 @@ bool MeetingControllerPane::eventFilter(QObject* watched, QEvent* event)
 
     if (event->type() == QEvent::MouseButtonPress && mouse->button() == Qt::LeftButton)
     {
-        if (onTitle && widget->hasFocus())
-            return QWidget::eventFilter(watched, event);
-
         dragSourceKey_ = key;
         dragPressGlobal_ = mouse->globalPosition().toPoint();
         dragMoved_ = false;
-        return onTitle ? true : QWidget::eventFilter(watched, event);
+        return QWidget::eventFilter(watched, event);
     }
 
     if (event->type() == QEvent::MouseMove
@@ -1342,8 +1314,6 @@ bool MeetingControllerPane::eventFilter(QObject* watched, QEvent* event)
             QTimer::singleShot(0, this, [this, from, to] { moveMeeting(from, to); });
             return true;
         }
-        if (onTitle)
-            widget->setFocus(Qt::MouseFocusReason);
     }
 
     return QWidget::eventFilter(watched, event);
@@ -1470,6 +1440,8 @@ void MeetingControllerPane::setSound(const QString& key, bool on)
 void MeetingControllerPane::onMeetingActivated(const QJsonObject& result)
 {
     const QString key = result.value("requestKey").toString();
+    const bool pin = !pendingPinKey_.isEmpty() && pendingPinKey_ == key;
+    if (pin) pendingPinKey_.clear();
 
     if (!result.value("ok").toBool())
     {
@@ -1492,6 +1464,16 @@ void MeetingControllerPane::onMeetingActivated(const QJsonObject& result)
             meeting->chromeTabName = chromeName;
         }
         appendLog(QString("Switched Chrome to \"%1\".").arg(meeting->title));
+        if (pin) {
+            const auto hwnd = reinterpret_cast<HWND>(meeting->handle());
+            DWORD pid = 0;
+            ::GetWindowThreadProcessId(hwnd, &pid);
+            const QString error = pid && pid == meeting->processId
+                ? windowsTop_->setPinned(hwnd, true) : tr("The meeting window is no longer available.");
+            setMeetingBusy(false, error.isEmpty() ? tr("Meeting window pinned on top.") : error);
+            if (!error.isEmpty()) QMessageBox::warning(this, tr("Always on Top"), error);
+            return;
+        }
     }
 
     setMeetingBusy(false, "Switched Chrome to the meeting tab");

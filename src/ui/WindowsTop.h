@@ -7,7 +7,8 @@
 #include <map>
 #include <memory>
 
-class WindowsTop final {
+class WindowsTop final : public QObject {
+    Q_OBJECT
 public:
     struct DesktopWindows {
         std::function<HWND()> foreground = ::GetForegroundWindow;
@@ -22,8 +23,13 @@ public:
     void configure(const WindowsTopSettings& settings);
     // An empty result means the command succeeded.
     QString toggle(WindowAction action, HWND window);
+    bool isPinned(HWND window) const;
+    QString setPinned(HWND window, bool pinned);
     QString toggleForeground(WindowAction action) { return toggle(action, m_desktop.foreground()); }
     static QString actionName(WindowAction action);
+
+signals:
+    void pinChanged(quintptr window, bool pinned);
 
 private:
     struct Window;

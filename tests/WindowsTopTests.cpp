@@ -30,6 +30,8 @@ int alpha(HWND hwnd) {
     return ::GetLayeredWindowAttributes(hwnd, nullptr, &a, nullptr) ? a : -1;
 }
 
+constexpr UINT allowPreviewActivation = WM_APP + 1;
+
 class PreviewSource final : public QWidget {
 public:
     QPoint lastClick{-1, -1};
@@ -37,6 +39,10 @@ public:
 protected:
     bool nativeEvent(const QByteArray& type, void* message, qintptr* result) override {
         const auto* msg = static_cast<MSG*>(message);
+        if (msg->message == allowPreviewActivation) {
+            *result = ::AllowSetForegroundWindow(static_cast<DWORD>(msg->wParam));
+            return true;
+        }
         if (msg->message == WM_LBUTTONUP) {
             ++releases;
             lastClick = QPoint(GET_X_LPARAM(msg->lParam), GET_Y_LPARAM(msg->lParam));
@@ -99,10 +105,11 @@ private slots:
 
     void restoresLayeredAndTopmostState() {
         QWidget source, layered;
+        layered.setWindowFlag(Qt::WindowStaysOnTopHint);
         source.show();
         layered.show();
         const auto a = handle(source), b = handle(layered);
-        ::SetWindowPos(b, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+        QTRY_VERIFY(hasStyle(b, WS_EX_TOPMOST));
         ::SetWindowLongPtrW(b, GWL_EXSTYLE, ::GetWindowLongPtrW(b, GWL_EXSTYLE) | WS_EX_LAYERED);
         constexpr COLORREF key = RGB(9, 13, 15);
         QVERIFY(::SetLayeredWindowAttributes(b, key, 181, LWA_ALPHA | LWA_COLORKEY));
@@ -259,6 +266,9 @@ private slots:
         QVERIFY(shortcut(WindowAction::PictureInPicture));
         QTRY_VERIFY(toolWindow("windowPreview"));
         auto* preview = toolWindow("windowPreview");
+        // A synthetic click cannot grant foreground permission like a physical click.
+        if (nativeForeground)
+            QVERIFY(::SendMessageW(source, allowPreviewActivation, ::GetCurrentProcessId(), 0));
         preview->activateWindow();
         if (nativeForeground) QTRY_COMPARE(::GetForegroundWindow(), handle(*preview));
         auto* canvas = preview->findChild<QLabel*>("previewCanvas");
@@ -283,7 +293,7 @@ private slots:
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     if (app.arguments().contains("--preview-fixture")) {
-        QWidget source;
+        PreviewSource source;
         source.setWindowTitle("Meeting Handler preview test");
         source.resize(360, 240);
         source.show();

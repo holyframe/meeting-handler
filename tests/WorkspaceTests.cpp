@@ -37,6 +37,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
+#include <QTabWidget>
 #include <QToolButton>
 
 namespace {
@@ -846,9 +847,15 @@ private slots:
                 auto* opacity = dialog->findChild<QSlider*>("windowOpacityPercent");
                 auto* hover = dialog->findChild<QCheckBox*>("windowOpaqueOnHover");
                 auto* controlPreview = dialog->findChild<QCheckBox*>("interactivePreview");
+                auto* tabs = dialog->findChild<QTabWidget*>();
                 fieldsFound = source && theme && hotkey && arrows && arrows->isChecked() && microphone && mute &&
                               microphone->currentText() == "Windows default" && mute->text() == "None" &&
-                              pin && border && opacity && hover && controlPreview;
+                              pin && border && opacity && hover && controlPreview &&
+                              tabs && tabs->count() == 4 && tabs->currentIndex() == 0 &&
+                              tabs->tabText(0) == "General" && tabs->widget(0)->isAncestorOf(source) &&
+                              tabs->tabText(1) == "Always on Top" && tabs->widget(1)->isAncestorOf(pin) &&
+                              tabs->tabText(2) == "PiP && Crop" && tabs->widget(2)->isAncestorOf(controlPreview) &&
+                              tabs->tabText(3) == "Opacity" && tabs->widget(3)->isAncestorOf(opacity);
                 if (fieldsFound) {
                     for (auto* button : dialog->findChildren<QAbstractButton*>())
                         fieldsFound = fieldsFound && button->cursor().shape() ==
@@ -861,11 +868,15 @@ private slots:
                     arrows->setChecked(false);
                     QTest::keyClick(hotkey, Qt::Key_F8, Qt::ControlModifier | Qt::AltModifier);
                     QTest::keyClick(mute, Qt::Key_F9, Qt::ControlModifier | Qt::ShiftModifier);
+                    tabs->setCurrentIndex(1);
                     QTest::keyClick(pin, Qt::Key_F11, Qt::AltModifier | Qt::ShiftModifier);
                     border->setValue(307);
+                    tabs->setCurrentIndex(2);
+                    controlPreview->setChecked(false);
+                    tabs->setCurrentIndex(3);
                     opacity->setValue(53);
                     hover->setChecked(true);
-                    controlPreview->setChecked(false);
+                    tabs->setCurrentIndex(0);
                     emit audio.microphonesListed({{"usb-a", "USB headset"}, {"usb-b", "USB headset"}});
                     microphone->setCurrentIndex(2);
                     emit audio.microphonesListed({{"usb-a", "USB headset"}});

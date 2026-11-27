@@ -1,4 +1,5 @@
 #include "ui/MeetingControllerPane.h"
+#include "ui/WindowsTop.h"
 #include "ui/AppTheme.h"
 #include "captions/Settings.h"
 #include "ui/MeetingAudioSummary.h"
@@ -21,6 +22,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTest>
 #include <QTimer>
@@ -620,19 +622,53 @@ private slots:
         QVERIFY(!window.meetingBusy_);
     }
 
-    void renamesCardWithoutChangingChromeTabName()
+    void meetingTitleIsReadOnly()
     {
         MeetingControllerPane window;
         populate(window, ManagedMeeting::Sound::On, ManagedMeeting::Microphone::Muted);
-        window.meetings_.first().chromeTabName = "Audio test meeting";
-        auto* edit = window.meetingCards_.first()->findChild<QLineEdit*>("meetingTitle");
-        QVERIFY(edit);
-        edit->setText("  Standup  ");
-        emit edit->editingFinished();
-        QCOMPARE(window.meetings_.first().title, QString("Standup"));
-        QCOMPARE(window.audioSummary_->item(0, 0)->text(), "Standup");
-        QCOMPARE(window.meetings_.first().chromeTabName, QString("Audio test meeting"));
-        QCOMPARE(window.meetings_.first().automationName(), QString("Audio test meeting"));
+        auto* card = window.meetingCards_.first();
+        QVERIFY(!card->findChild<QLineEdit*>("meetingTitle"));
+        auto* title = card->findChild<QLabel*>("meetingTitle");
+        QVERIFY(title);
+        QCOMPARE(title->text(), window.meetings_.first().displayTitle());
+    }
+
+    void pinSelectsTheMeetingAndTracksItsWindow()
+    {
+        HWND hwnd = ::CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"STATIC", L"Meeting test",
+            WS_POPUP | WS_VISIBLE, 0, 0, 10, 10, nullptr, nullptr, nullptr, nullptr);
+        QVERIFY(hwnd);
+        const auto cleanup = qScopeGuard([hwnd] { ::DestroyWindow(hwnd); });
+        WindowsTop manager;
+        WindowsTopSettings options;
+        options.highlight = false;
+        manager.configure(options);
+        MeetingControllerPane window(nullptr, &manager);
+        populate(window, ManagedMeeting::Sound::On, ManagedMeeting::Microphone::Muted);
+        auto& first = window.meetings_.first();
+        first.windowHandle = QString::number(reinterpret_cast<quintptr>(hwnd), 16);
+        first.processId = ::GetCurrentProcessId();
+        const auto key = first.key();
+        auto other = first;
+        other.tabRuntimeId = "second-tab";
+        window.meetings_.append(other);
+        window.refreshMeetingCards();
+        const auto pin = [&](int index) {
+            return window.meetingCards_.at(index)->findChild<QCheckBox*>("pinMeetingWindow");
+        };
+        QSignalSpy selecting(&window, &MeetingControllerPane::activationRequested);
+        pin(0)->click();
+        QCOMPARE(selecting.size(), 1);
+        QCOMPARE(selecting.first().last().toString(), key);
+        QVERIFY(!manager.isPinned(hwnd));
+        window.onMeetingActivated({{"requestKey", key}, {"tabRuntimeId", "new-tab-id"}, {"ok", true}});
+        QVERIFY(manager.isPinned(hwnd) && pin(0)->isChecked() && pin(1)->isChecked());
+        QVERIFY(::GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST);
+        pin(1)->click();
+        QVERIFY(!manager.isPinned(hwnd) && !pin(0)->isChecked() && !pin(1)->isChecked());
+        QCOMPARE(selecting.size(), 1);
+        QVERIFY(manager.toggle(WindowAction::Pin, hwnd).isEmpty());
+        QVERIFY(pin(0)->isChecked() && pin(1)->isChecked());
     }
 
     void reordersMeetingsByDragTarget()
@@ -1213,20 +1249,17 @@ private slots:
         QCOMPARE(window.meetingCards_.at(0)->objectName(), QString("meetingCardActive"));
         QCOMPARE(window.meetingCards_.at(1)->objectName(), QString("meetingCardActive"));
         QCOMPARE(window.meetingCards_.at(2)->objectName(), QString("meetingCard"));
-        QVERIFY(window.meetingCards_.at(0)->findChild<QLabel*>("activeBadge") != nullptr);
-        QVERIFY(window.meetingCards_.at(1)->findChild<QLabel*>("activeBadge") != nullptr);
-        QVERIFY(window.meetingCards_.at(2)->findChild<QLabel*>("activeBadge") == nullptr);
-        QVERIFY(window.meetingCards_.at(0)->findChild<QPushButton*>("activeRefreshButton") != nullptr);
-        QVERIFY(window.meetingCards_.at(2)->findChild<QPushButton*>("activeRefreshButton") == nullptr);
+        for (auto* card : window.meetingCards_) {
+            QVERIFY(!card->findChild<QLabel*>("activeBadge"));
+            QVERIFY(!card->findChild<QPushButton*>("activeRefreshButton"));
+            QVERIFY(card->findChild<QCheckBox*>("pinMeetingWindow"));
+        }
         QCOMPARE(window.meetingCountValue_->text(), QString("2/3"));
         window.show();
         QTest::qWait(100);
         auto* activeCard = window.meetingCards_.at(0);
         for (auto* button : activeCard->findChildren<QPushButton*>())
             QCOMPARE(button->cursor().shape(), button->isEnabled() ? Qt::PointingHandCursor : Qt::ArrowCursor);
-        auto* refresh = activeCard->findChild<QPushButton*>("activeRefreshButton");
-        auto* activeLabel = activeCard->findChild<QLabel*>("activeBadge");
-        QVERIFY(refresh->mapTo(activeCard, QPoint()).x() < activeLabel->mapTo(activeCard, QPoint()).x());
         QPushButton* unmute = nullptr;
         for (QPushButton* button : activeCard->findChildren<QPushButton*>())
         {

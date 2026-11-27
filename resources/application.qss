@@ -90,30 +90,20 @@ QFrame#meetingCard[hovered="true"], QFrame#meetingCardActive[hovered="true"] {
 QFrame#meetingCard[dropHover="true"], QFrame#meetingCardActive[dropHover="true"] {
     border: 2px dashed palette(text);
 }
-QLineEdit#meetingTitle {
+QLabel#meetingTitle {
     color: palette(text); background: transparent; border: 1px solid transparent;
     padding: 1px 2px; font-size: 11pt; font-weight: 700;
 }
-QLineEdit#meetingTitle:hover { border-color: palette(mid); }
-QLineEdit#meetingTitle:focus { background: palette(base); border-color: palette(text); }
 QLabel#meetingIcon {
     background: palette(midlight); border-radius: 9px; font-size: 15pt; font-weight: 700;
 }
-QWidget#activeBadgeShell { border-radius: 9px; }
-QLabel#activeBadge, QPushButton#activeRefreshButton {
-    color: #052e1a; background: transparent; border: none; font-size: 9pt; font-weight: 700;
-}
-QLabel#activeBadge { padding: 2px 0; }
-QPushButton#activeRefreshButton, QPushButton#cardCloseButton { padding: 0; border-radius: 8px; }
-QPushButton#activeRefreshButton:enabled:hover { background: #15803d; color: palette(bright-text); }
-QPushButton#activeRefreshButton:focus { border: 1px solid palette(text); }
-QPushButton#cardCloseButton { font-size: 14pt; }
+QPushButton#cardCloseButton { padding: 0; border-radius: 8px; font-size: 14pt; }
 QPushButton#primaryButton, QCheckBox#tabImportCheck { font-weight: 700; }
 QPushButton#dangerButton:enabled, QPushButton#cardCloseButton:enabled:hover { border-color: theme(warning-background); }
 QPushButton#railConnectionButton {
     background: theme(disabled-text); border: none; padding: 0; border-radius: 5px;
 }
-QWidget#activeBadgeShell, QPushButton#railConnectionButton[connection="ready"] { background: #22c55e; }
+QPushButton#railConnectionButton[connection="ready"] { background: #22c55e; }
 QTableWidget#meetingAudioStatus {
     background: palette(base); alternate-background-color: palette(alternate-base); color: palette(text);
     border: 1px solid palette(mid); border-radius: 6px; font-size: 9pt;
@@ -137,6 +127,8 @@ QWidget#pingStatusPanel[warning="true"], QWidget#pingStatusPanel[warning="true"]
     background: theme(warning-background);
     border-color: #ee929c;
 }
-QFrame#meetingCard[unmuted="true"] QLineEdit#meetingTitle:!focus,
-QFrame#meetingCardActive[unmuted="true"] QLineEdit#meetingTitle:!focus { color: palette(bright-text); }
+QFrame#meetingCard[unmuted="true"] QLabel#meetingTitle,
+QFrame#meetingCardActive[unmuted="true"] QLabel#meetingTitle,
+QFrame#meetingCard[unmuted="true"] QCheckBox#pinMeetingWindow,
+QFrame#meetingCardActive[unmuted="true"] QCheckBox#pinMeetingWindow { color: palette(bright-text); }
 QWidget#pingStatusPanel[warning="true"] QPlainTextEdit#pingOutput { color: #ffe2e5; }

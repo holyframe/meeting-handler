@@ -22,6 +22,7 @@ class QTabWidget;
 class QThread;
 class MeetingAudioSummary;
 class UiaWorker;
+class WindowsTop;
 
 class MeetingControllerPane final : public QWidget
 {
@@ -29,7 +30,7 @@ class MeetingControllerPane final : public QWidget
     friend class MeetingControllerTests;
 
 public:
-    explicit MeetingControllerPane(QWidget* parent = nullptr);
+    explicit MeetingControllerPane(QWidget* parent = nullptr, WindowsTop* windowsTop = nullptr);
     ~MeetingControllerPane() override;
     const QString& statusMessage() const { return statusMessage_; }
     bool meetingsCollapsed() const { return meetingsCollapsed_; }
@@ -129,6 +130,8 @@ private:
 
     QString statusMessage_;
     QString lastLog_;
+    WindowsTop* windowsTop_;
+    QString pendingPinKey_;
     QThread* workerThread_ = nullptr;
     UiaWorker* worker_ = nullptr;
     MeetingBatch* batch_ = nullptr;

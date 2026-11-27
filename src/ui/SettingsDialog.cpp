@@ -338,13 +338,9 @@ bool ShowSettingsDialog(QWidget* owner, Settings& settings, WindowsAudioLevels& 
     folderRow->addWidget(browse);
     form->addRow(QObject::tr("Save folder"), folderRow);
     form->addRow(QString(), new QLabel(QObject::tr("Save creates a timestamped file named after the picked tab.")));
-    auto* windowPage = new QWidget(pages);
-    pages->addTab(windowPage, QObject::tr("WindowsTop"));
-    auto* windowLayout = new QVBoxLayout(windowPage);
-    windowLayout->addWidget(new QLabel(QObject::tr("These global shortcuts act on the foreground window."), windowPage));
-    auto* windowTabs = new QTabWidget(windowPage);
-    windowLayout->addWidget(windowTabs);
-    addWindowsTop(windowTabs, top, bindings);
+    addWindowsTop(pages, top, bindings);
+    for (int i = 1; i < pages->count(); ++i)
+        pages->setTabToolTip(i, QObject::tr("These global shortcuts act on the foreground window."));
     auto* shortcutError = new QLabel(&dialog);
     shortcutError->setObjectName("shortcutError");
     shortcutError->setWordWrap(true);
@@ -368,8 +364,7 @@ bool ShowSettingsDialog(QWidget* owner, Settings& settings, WindowsAudioLevels& 
             if (problem.isEmpty() && !shortcutAvailable(window, edit, old->modifiers, old->key))
                 problem = QObject::tr("%1 is unavailable. Choose another shortcut.").arg(edit->accessibleName());
             if (problem.isEmpty()) continue;
-            pages->setCurrentWidget(windowPage->isAncestorOf(edit) ? windowPage : form->parentWidget());
-            if (windowPage->isAncestorOf(edit)) windowTabs->setCurrentWidget(edit->parentWidget());
+            pages->setCurrentWidget(edit->parentWidget());
             edit->setFocus();
             shortcutError->setText(problem);
             shortcutError->show();

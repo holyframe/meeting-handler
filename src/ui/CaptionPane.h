@@ -41,6 +41,7 @@ public:
         : CaptionPane(targetSidebar, parent, {}) {}
     ~CaptionPane() override;
     bool initialize(const Settings& settings);
+    WindowsTop& windowManager() { return m_windowsTop; }
     void setLogVisible(bool visible);
     void setTargetSidebarWidth(int width) { m_settings.sidePanelWidth = width; }
 
